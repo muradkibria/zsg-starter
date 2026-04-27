@@ -185,40 +185,54 @@ async function login() {
   if (isAuthenticating) return;
   isAuthenticating = true;
   try {
+    // Colorlight uses the WordPress "Login With Ajax" plugin variant,
+    // not the standard form. Confirmed from network capture.
     const params = new URLSearchParams();
     params.append("log", username);
     params.append("pwd", password);
-    params.append("wp-submit", "Log In");
-    params.append("redirect_to", "/home");
-    params.append("testcookie", "1");
+    params.append("lwa", "1");
+    params.append("login-with-ajax", "login");
 
-    // First request: GET wp-login.php to seed wordpress_test_cookie if required
-    try {
-      const seed = await client!.get("/wp-login.php");
-      captureCookies(seed.headers["set-cookie"]);
-    } catch {
-      // Some WP installs return 302 here; cookies still extractable
-    }
-
-    const res = await client!.post("/wp-login.php", params.toString(), {
+    const res = await client!.post<{
+      result?: boolean;
+      message?: string;
+      action?: string;
+      user?: { data?: { username?: string; role?: string } };
+      cookie?: { cookie_name?: string };
+    }>("/wp-login.php", params.toString(), {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
     });
 
     captureCookies(res.headers["set-cookie"]);
 
-    const hasLoggedInCookie = cookies.some((c) =>
-      /^wordpress_logged_in_/.test(c)
-    );
-    if (!hasLoggedInCookie) {
+    const body = res.data;
+    if (!body || body.result !== true) {
       throw new Error(
-        `Login did not return a wordpress_logged_in_* cookie. Status: ${res.status}. Check credentials and base URL.`
+        `Login rejected by Colorlight. message="${body?.message ?? "(none)"}" status=${res.status}. Check credentials and base URL.`
+      );
+    }
+
+    if (cookies.length === 0) {
+      // Login OK but no cookies received — would still hit 401 on next call.
+      throw new Error(
+        "Login returned result=true but no Set-Cookie headers were captured. Check that your reverse proxy isn't stripping cookies."
       );
     }
 
     lastAuthAt = Date.now();
+    const userInfo = body.user?.data;
     console.log(
-      `[colorlight] authenticated as ${username} @ ${baseURL} (${cookies.length} cookies)`
+      `[colorlight] authenticated as ${userInfo?.username ?? username} (${userInfo?.role ?? "?"}) @ ${baseURL} — ${cookies.length} cookie(s)`
     );
+
+    // Verify session works by hitting a protected endpoint
+    try {
+      await client!.get("/wp-json/wp/v2/users/me");
+    } catch (err: any) {
+      throw new Error(
+        `Session cookie was set but verification call to /users/me failed (${err.response?.status ?? err.code}). Cookies may not be valid.`
+      );
+    }
   } finally {
     isAuthenticating = false;
   }

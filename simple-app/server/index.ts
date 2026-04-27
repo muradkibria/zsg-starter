@@ -4,9 +4,11 @@ import express from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT ?? 3000);
 
 const app = express();
+// Trust the platform's proxy (Railway, Heroku, etc.) for correct req.ip / req.protocol
+app.set("trust proxy", 1);
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 

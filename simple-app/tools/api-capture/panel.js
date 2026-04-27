@@ -13,9 +13,12 @@ const REDACTED_HEADERS = new Set([
 ]);
 
 const REDACTED_BODY_FIELDS = [
-  "password", "token", "accessToken", "refreshToken",
+  "password", "pwd", "passwd", "token", "accessToken", "refreshToken",
   "secret", "apiKey", "api_key", "access_token", "refresh_token",
 ];
+
+// Form-encoded fields (login forms etc) — same field names, different syntax
+const FORM_REDACTED_FIELDS = ["password", "pwd", "passwd", "secret"];
 
 const MAX_SAMPLES_PER_ENDPOINT = 3;
 const MAX_BODY_LENGTH = 50_000;
@@ -146,10 +149,15 @@ function redactHeaders(obj) {
 function redactBodyString(body) {
   if (typeof body !== "string") return body;
   let out = body;
+  // JSON-style: "field": "value"
   for (const field of REDACTED_BODY_FIELDS) {
-    // "field": "value" or "field":"value"
     const re = new RegExp(`("${field}"\\s*:\\s*)"[^"]*"`, "gi");
     out = out.replace(re, '$1"[REDACTED]"');
+  }
+  // Form-encoded style: field=value separated by &
+  for (const field of FORM_REDACTED_FIELDS) {
+    const re = new RegExp(`(^|&)(${field})=([^&]*)`, "gi");
+    out = out.replace(re, "$1$2=[REDACTED]");
   }
   return out;
 }
