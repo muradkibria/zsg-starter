@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { useAuthStore } from "@/lib/auth";
+import { ErrorState } from "@/components/ui/error-state";
 
 interface Campaign { id: string; name: string }
 interface Zone { id: string; name: string }
@@ -46,21 +47,24 @@ export function Reports() {
   const { data: zones = [] } = useQuery<Zone[]>({ queryKey: ["zones"], queryFn: () => api.get("/zones") });
   const { data: riders = [] } = useQuery<Rider[]>({ queryKey: ["riders"], queryFn: () => api.get("/riders") });
 
-  const { data: campaignReport = [] } = useQuery<DayRow[]>({
+  const campaignQ = useQuery<DayRow[]>({
     queryKey: ["report", "campaign", selectedCampaign],
     queryFn: () => api.get(`/reports/campaign/${selectedCampaign}`),
     enabled: !!selectedCampaign,
   });
-  const { data: zoneReport = [] } = useQuery<DayRow[]>({
+  const zoneQ = useQuery<DayRow[]>({
     queryKey: ["report", "zone", selectedZone],
     queryFn: () => api.get(`/reports/zone/${selectedZone}`),
     enabled: !!selectedZone,
   });
-  const { data: riderReport = [] } = useQuery<DayRow[]>({
+  const riderQ = useQuery<DayRow[]>({
     queryKey: ["report", "rider", selectedRider],
     queryFn: () => api.get(`/reports/rider/${selectedRider}`),
     enabled: !!selectedRider,
   });
+  const campaignReport = campaignQ.data ?? [];
+  const zoneReport = zoneQ.data ?? [];
+  const riderReport = riderQ.data ?? [];
 
   const exportCsv = (type: string, id: string) => {
     const url = `/api/reports/export/csv?type=${type}&id=${id}`;
@@ -91,7 +95,11 @@ export function Reports() {
             </div>
           </CardHeader>
           <CardContent>
-            <BarChart data={campaignReport} valueKey="plays" label="Plays" />
+            {campaignQ.isError ? (
+              <ErrorState title="Couldn't load campaign report" error={campaignQ.error} onRetry={() => campaignQ.refetch()} variant="inline" />
+            ) : (
+              <BarChart data={Array.isArray(campaignReport) ? campaignReport : []} valueKey="plays" label="Plays" />
+            )}
           </CardContent>
         </Card>
       </TabsContent>
@@ -109,7 +117,11 @@ export function Reports() {
             </div>
           </CardHeader>
           <CardContent>
-            <BarChart data={zoneReport} valueKey="visits" label="Visits" />
+            {zoneQ.isError ? (
+              <ErrorState title="Couldn't load zone report" error={zoneQ.error} onRetry={() => zoneQ.refetch()} variant="inline" />
+            ) : (
+              <BarChart data={Array.isArray(zoneReport) ? zoneReport : []} valueKey="visits" label="Visits" />
+            )}
           </CardContent>
         </Card>
       </TabsContent>
@@ -127,7 +139,11 @@ export function Reports() {
             </div>
           </CardHeader>
           <CardContent>
-            <BarChart data={riderReport} valueKey="sessions" label="Sessions" />
+            {riderQ.isError ? (
+              <ErrorState title="Couldn't load rider report" error={riderQ.error} onRetry={() => riderQ.refetch()} variant="inline" />
+            ) : (
+              <BarChart data={Array.isArray(riderReport) ? riderReport : []} valueKey="sessions" label="Sessions" />
+            )}
           </CardContent>
         </Card>
       </TabsContent>

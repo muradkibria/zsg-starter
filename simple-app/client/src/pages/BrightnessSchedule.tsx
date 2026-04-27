@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, Pencil, Trash2, Sun, Sunset, Moon, Sunrise } from "lucide-react";
+import { ErrorState } from "@/components/ui/error-state";
 
 interface BrightnessSchedule {
   id: string;
@@ -61,7 +62,7 @@ const emptyForm = {
 
 export function BrightnessSchedule() {
   const qc = useQueryClient();
-  const { data: schedules = [], isLoading } = useQuery<BrightnessSchedule[]>({
+  const { data: schedules = [], isLoading, isError, error, refetch } = useQuery<BrightnessSchedule[]>({
     queryKey: ["brightness"],
     queryFn: () => api.get("/brightness"),
   });
@@ -140,6 +141,12 @@ export function BrightnessSchedule() {
             <Skeleton key={i} className="h-16 w-full rounded-lg" />
           ))}
         </div>
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load brightness schedules"
+          error={error}
+          onRetry={() => refetch()}
+        />
       ) : sorted.length === 0 ? (
         <div className="border rounded-lg py-12 text-center text-muted-foreground text-sm">
           No brightness schedules. Add one to get started.

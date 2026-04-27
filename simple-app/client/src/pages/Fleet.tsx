@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { ErrorState } from "@/components/ui/error-state";
 import {
   Plus, Phone, Mail, MapPin, FileText, Clock, Download, ChevronRight, Loader2,
 } from "lucide-react";
@@ -409,7 +410,13 @@ function RegisterRiderDialog({
 export function Fleet() {
   const qc = useQueryClient();
 
-  const { data: bags = [], isLoading: bagsLoading } = useQuery<Bag[]>({
+  const {
+    data: bags = [],
+    isLoading: bagsLoading,
+    isError: bagsErr,
+    error: bagsError,
+    refetch: refetchBags,
+  } = useQuery<Bag[]>({
     queryKey: ["bags"],
     queryFn: () => api.get("/bags"),
   });
@@ -451,6 +458,13 @@ export function Fleet() {
                 <Plus className="h-3.5 w-3.5 mr-1" />Add Terminal
               </Button>
             </div>
+            {bagsErr ? (
+              <ErrorState
+                title="Couldn't load terminals"
+                error={bagsError}
+                onRetry={() => refetchBags()}
+              />
+            ) : (
             <div className="border rounded-lg overflow-hidden">
               <Table>
                 <TableHeader>
@@ -499,6 +513,7 @@ export function Fleet() {
                 </TableBody>
               </Table>
             </div>
+            )}
           </TabsContent>
 
           {/* ── Riders tab ── */}

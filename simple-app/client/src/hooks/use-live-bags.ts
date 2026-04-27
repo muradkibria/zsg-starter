@@ -13,7 +13,7 @@ export interface BagLiveState {
 }
 
 export function useLiveBags() {
-  const { data: initial } = useQuery<BagLiveState[]>({
+  const { data: initial, isLoading, isError, error, refetch } = useQuery<BagLiveState[]>({
     queryKey: ["fleet", "live"],
     queryFn: () => api.get<BagLiveState[]>("/fleet/live"),
     refetchInterval: 30_000,
@@ -64,5 +64,11 @@ export function useLiveBags() {
     };
   }, []);
 
-  return Array.from(bags.values());
+  return {
+    bags: Array.from(bags.values()),
+    isLoading,
+    isError,
+    error,
+    refetch,
+  };
 }

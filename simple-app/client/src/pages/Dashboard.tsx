@@ -4,6 +4,8 @@ import { api } from "@/lib/api";
 import { useLiveBags } from "@/hooks/use-live-bags";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveMap, type MapMode } from "@/components/map/LiveMap";
+import { ErrorState } from "@/components/ui/error-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Truck, Users, Megaphone, MapPin } from "lucide-react";
 
 interface Campaign { id: string; status: string }
@@ -16,7 +18,7 @@ const MAP_MODES: { value: MapMode; label: string; desc: string }[] = [
 ];
 
 export function Dashboard() {
-  const bags = useLiveBags();
+  const { bags, isLoading: bagsLoading, isError: bagsError, error, refetch } = useLiveBags();
   const [mapMode, setMapMode] = useState<MapMode>("live");
 
   const { data: campaigns = [] } = useQuery<Campaign[]>({
@@ -45,8 +47,14 @@ export function Dashboard() {
               <Icon className={`h-4 w-4 ${color}`} />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{value}</div>
-              <p className="text-xs text-muted-foreground mt-0.5">of {total} total</p>
+              {bagsLoading && (label === "Active Bags" || label === "Bags on Map") ? (
+                <Skeleton className="h-8 w-16" />
+              ) : (
+                <>
+                  <div className="text-2xl font-bold">{value}</div>
+                  <p className="text-xs text-muted-foreground mt-0.5">of {total} total</p>
+                </>
+              )}
             </CardContent>
           </Card>
         ))}
@@ -72,8 +80,21 @@ export function Dashboard() {
             ))}
           </div>
         </CardHeader>
-        <CardContent className="p-0 overflow-hidden rounded-b-lg" style={{ height: 480 }}>
-          <LiveMap bags={bags} mode={mapMode} />
+        <CardContent
+          className="p-0 overflow-hidden rounded-b-lg"
+          style={{ height: bagsError ? "auto" : 480 }}
+        >
+          {bagsError ? (
+            <div className="p-6">
+              <ErrorState
+                title="Live fleet data unavailable"
+                error={error}
+                onRetry={() => refetch()}
+              />
+            </div>
+          ) : (
+            <LiveMap bags={bags} mode={mapMode} />
+          )}
         </CardContent>
       </Card>
     </div>

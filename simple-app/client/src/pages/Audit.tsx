@@ -6,14 +6,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ErrorState } from "@/components/ui/error-state";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 interface AuditLog {
   id: string;
   action: string;
-  entityType: string | null;
-  entityId: string | null;
-  createdAt: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  created: string;
+}
+
+interface AuditResponse {
+  items: AuditLog[];
+  totalItems: number;
+  page: number;
+  perPage: number;
+  totalPages: number;
 }
 
 const entityTypes = ["", "bag", "rider", "campaign", "media_asset", "system"];
@@ -22,10 +31,14 @@ export function Audit() {
   const [page, setPage] = useState(1);
   const [entityFilter, setEntityFilter] = useState("");
 
-  const { data: logs = [], isLoading } = useQuery<AuditLog[]>({
+  const { data, isLoading, isError, error, refetch } = useQuery<AuditResponse>({
     queryKey: ["audit", page, entityFilter],
-    queryFn: () => api.get(`/audit?page=${page}&limit=50${entityFilter ? `&entity_type=${entityFilter}` : ""}`),
+    queryFn: () =>
+      api.get(`/audit?page=${page}&perPage=50${entityFilter ? `&entity_type=${entityFilter}` : ""}`),
   });
+
+  const logs = data?.items ?? [];
+  const totalPages = data?.totalPages ?? 1;
 
   return (
     <div className="space-y-4">
@@ -39,46 +52,62 @@ export function Audit() {
         </Select>
       </div>
 
-      <div className="border rounded-lg overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Time</TableHead>
-              <TableHead>Action</TableHead>
-              <TableHead>Entity</TableHead>
-              <TableHead>ID</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: 8 }).map((_, i) => <TableRow key={i}><TableCell colSpan={4}><Skeleton className="h-4 w-full" /></TableCell></TableRow>)
-            ) : logs.length === 0 ? (
-              <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">No audit logs</TableCell></TableRow>
-            ) : logs.map((log) => (
-              <TableRow key={log.id}>
-                <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                  {new Date(log.createdAt).toLocaleString()}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline" className="text-xs font-mono">{log.action}</Badge>
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">{log.entityType ?? "—"}</TableCell>
-                <TableCell className="text-xs font-mono text-muted-foreground truncate max-w-[160px]" title={log.entityId ?? ""}>
-                  {log.entityId ?? "—"}
-                </TableCell>
+      {isError ? (
+        <ErrorState
+          title="Couldn't load audit log"
+          error={error}
+          onRetry={() => refetch()}
+        />
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Action</TableHead>
+                <TableHead>Entity</TableHead>
+                <TableHead>ID</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                Array.from({ length: 8 }).map((_, i) => (
+                  <TableRow key={i}>
+                    <TableCell colSpan={4}><Skeleton className="h-4 w-full" /></TableCell>
+                  </TableRow>
+                ))
+              ) : logs.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                    No audit logs
+                  </TableCell>
+                </TableRow>
+              ) : logs.map((log) => (
+                <TableRow key={log.id}>
+                  <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                    {new Date(log.created).toLocaleString()}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-xs font-mono">{log.action}</Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{log.entity_type ?? "—"}</TableCell>
+                  <TableCell className="text-xs font-mono text-muted-foreground truncate max-w-[160px]" title={log.entity_id ?? ""}>
+                    {log.entity_id ?? "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
       <div className="flex items-center justify-between text-sm">
-        <span className="text-muted-foreground">{logs.length} entries (page {page})</span>
+        <span className="text-muted-foreground">{logs.length} entries (page {page} of {totalPages})</span>
         <div className="flex gap-1">
           <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
             <ChevronLeft className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="outline" size="sm" disabled={logs.length < 50} onClick={() => setPage((p) => p + 1)}>
+          <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
             <ChevronRight className="h-3.5 w-3.5" />
           </Button>
         </div>

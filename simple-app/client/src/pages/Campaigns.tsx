@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Rocket, BarChart2, Layers, Film, Image as ImageIcon, Loader2 } from "lucide-react";
+import { ErrorState, EmptyState } from "@/components/ui/error-state";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -340,12 +341,22 @@ function AdSlotsTab({ bags, adSlots, campaigns, media }: { bags: Bag[]; adSlots:
 }
 
 function AdPlayBreakdown({ campaigns, media }: { campaigns: Campaign[]; media: Media[] }) {
-  const { data, isLoading } = useQuery<{ rows: PlayRow[]; total: number }>({
+  const { data, isLoading, isError, error, refetch } = useQuery<{ rows: PlayRow[]; total: number }>({
     queryKey: ["ad-plays"],
     queryFn: () => api.get("/reports/ad-plays"),
   });
 
   if (isLoading) return <Skeleton className="h-32 w-full" />;
+  if (isError) {
+    return (
+      <ErrorState
+        title="Couldn't load ad-play stats"
+        error={error}
+        onRetry={() => refetch()}
+        variant="card"
+      />
+    );
+  }
   if (!data || data.rows.length === 0) return null;
 
   const max = Math.max(...data.rows.map((r) => r.plays));

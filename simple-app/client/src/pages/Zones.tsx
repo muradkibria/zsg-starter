@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LiveMap } from "@/components/map/LiveMap";
 import { Plus, Trash2, MapPin } from "lucide-react";
+import { ErrorState } from "@/components/ui/error-state";
 
 interface Zone {
   id: string;
@@ -23,7 +24,7 @@ interface Zone {
 
 export function Zones() {
   const qc = useQueryClient();
-  const { data: zones = [] } = useQuery<Zone[]>({
+  const { data: zones = [], isError: zonesErr, error: zonesError, refetch: refetchZones } = useQuery<Zone[]>({
     queryKey: ["zones"],
     queryFn: () => api.get("/zones"),
   });
@@ -59,7 +60,9 @@ export function Zones() {
         </div>
 
         <div className="space-y-2">
-          {zones.length === 0 ? (
+          {zonesErr ? (
+            <ErrorState title="Couldn't load zones" error={zonesError} onRetry={() => refetchZones()} />
+          ) : zones.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">No zones defined</p>
           ) : zones.map((zone) => (
             <Card key={zone.id}>
