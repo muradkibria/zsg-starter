@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import { useLiveBags } from "@/hooks/use-live-bags";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveMap, type MapMode } from "@/components/map/LiveMap";
+import { BagFilter } from "@/components/map/BagFilter";
 import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Truck, Users, Megaphone, MapPin } from "lucide-react";
@@ -20,6 +21,7 @@ const MAP_MODES: { value: MapMode; label: string; desc: string }[] = [
 export function Dashboard() {
   const { bags, isLoading: bagsLoading, isError: bagsError, error, refetch } = useLiveBags();
   const [mapMode, setMapMode] = useState<MapMode>("live");
+  const [selectedBags, setSelectedBags] = useState<Set<string>>(new Set());
 
   const { data: campaigns = [] } = useQuery<Campaign[]>({
     queryKey: ["campaigns"],
@@ -61,8 +63,17 @@ export function Dashboard() {
       </div>
 
       <Card>
-        <CardHeader className="pb-2 flex flex-row items-center justify-between">
-          <CardTitle className="text-sm font-medium">Fleet Map</CardTitle>
+        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <CardTitle className="text-sm font-medium">Fleet Map</CardTitle>
+            {!bagsError && bags.length > 0 && (
+              <BagFilter
+                bags={bags}
+                selected={selectedBags}
+                onChange={setSelectedBags}
+              />
+            )}
+          </div>
           <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
             {MAP_MODES.map(({ value, label, desc }) => (
               <button
@@ -93,7 +104,7 @@ export function Dashboard() {
               />
             </div>
           ) : (
-            <LiveMap bags={bags} mode={mapMode} />
+            <LiveMap bags={bags} mode={mapMode} selectedBagIds={selectedBags} />
           )}
         </CardContent>
       </Card>

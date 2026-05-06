@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { BagLiveState } from "@/hooks/use-live-bags";
 import { ZoneLayer } from "./ZoneLayer";
+import { applyBagFilter } from "./BagFilter";
 
 // ── Custom markers ───────────────────────────────────────────────────────────
 
@@ -240,7 +241,8 @@ function BagRoute({ bag, color }: { bag: BagLiveState; color: string }) {
 
 // ── Heatmap layer ────────────────────────────────────────────────────────────
 
-function HeatmapLayer() {
+// Fleet-wide heatmap (server-aggregated cell density)
+function FleetHeatmap() {
   const { data: points = [] } = useQuery<{ lat: number; lng: number }[]>({
     queryKey: ["fleet-heatmap"],
     queryFn: () => api.get("/fleet/heatmap"),
@@ -263,23 +265,66 @@ function HeatmapLayer() {
   );
 }
 
+// Per-bag heatmap built from each selected bag's track (used when filtered)
+function FilteredHeatmap({ bags }: { bags: BagLiveState[] }) {
+  const queries = useQueries({
+    queries: bags.map((bag) => ({
+      queryKey: ["bag-route", bag.id],
+      queryFn: () => api.get<{ lat: number; lng: number; timestamp: string }[]>(`/bags/${bag.id}/route`),
+      staleTime: 60_000,
+    })),
+  });
+
+  const allPoints = queries.flatMap((q) => q.data ?? []);
+  // Sample to keep DOM manageable; 1 in every 3 points still gives a strong density signal
+  const sampled = allPoints.filter((_, i) => i % 3 === 0);
+
+  return (
+    <>
+      {sampled.map((p, i) => (
+        <CircleMarker
+          key={i}
+          center={[p.lat, p.lng]}
+          radius={6}
+          pathOptions={{ color: "#f97316", fillColor: "#f97316", fillOpacity: 0.22, weight: 0 }}
+        />
+      ))}
+    </>
+  );
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 interface LiveMapProps {
   bags: BagLiveState[];
   mode: MapMode;
   showZones?: boolean;
+  /**
+   * Optional bag selection. Passed down from the filter dropdown.
+   * - empty Set     → no filter (show all)
+   * - has "__none__" → show none
+   * - otherwise      → only those IDs
+   */
+  selectedBagIds?: Set<string>;
 }
 
-export function LiveMap({ bags, mode, showZones = true }: LiveMapProps) {
-  const bagsWithGps = bags.filter((b) => b.gps != null);
-  const activeCount = bags.filter((b) => b.status === "active" && b.gps).length;
-  const offlineCount = bags.filter((b) => b.status !== "active" && b.gps).length;
+export function LiveMap({ bags, mode, showZones = true, selectedBagIds }: LiveMapProps) {
+  const filterSet = selectedBagIds ?? new Set<string>();
+  const visibleBags = applyBagFilter(bags, filterSet);
+
+  const isFiltered =
+    filterSet.size > 0 && (filterSet.has("__none__") || filterSet.size < bags.length);
+
+  const bagsWithGps = visibleBags.filter((b) => b.gps != null);
+  const activeCount = visibleBags.filter((b) => b.status === "active" && b.gps).length;
+  const offlineCount = visibleBags.filter((b) => b.status !== "active" && b.gps).length;
 
   const defaultCenter: [number, number] =
     bagsWithGps.length > 0
       ? [bagsWithGps[0].gps!.lat, bagsWithGps[0].gps!.lng]
-      : [51.505, -0.09];
+      : bags.find((b) => b.gps)?.gps
+        ? [bags.find((b) => b.gps)!.gps!.lat, bags.find((b) => b.gps)!.gps!.lng]
+        : [51.505, -0.09];
 
   return (
     <MapContainer
@@ -293,13 +338,20 @@ export function LiveMap({ bags, mode, showZones = true }: LiveMapProps) {
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <LocateMe />
-      {(mode === "live" || mode === "route") && <Legend activeCount={activeCount} offlineCount={offlineCount} />}
+      {(mode === "live" || mode === "route") && (
+        <Legend activeCount={activeCount} offlineCount={offlineCount} />
+      )}
       {showZones && <ZoneLayer />}
 
-      {mode === "live" && bags.map((bag) => <BagMarker key={bag.id} bag={bag} />)}
+      {mode === "live" && visibleBags.map((bag) => <BagMarker key={bag.id} bag={bag} />)}
 
-      {mode === "route" && <RouteLayer bags={bags} />}
-      {mode === "heatmap" && <HeatmapLayer />}
+      {mode === "route" && <RouteLayer bags={visibleBags} />}
+
+      {mode === "heatmap" && (
+        isFiltered
+          ? <FilteredHeatmap bags={bagsWithGps} />
+          : <FleetHeatmap />
+      )}
     </MapContainer>
   );
 }
