@@ -309,6 +309,28 @@ export async function getLatestGpsForTerminal(
   }
 }
 
+/**
+ * Fetch latest GPS for many terminals concurrently (in batches).
+ * The bulk `/latest` endpoint with empty terminalGroupId returns
+ * inconsistent results, so we fan out to `/latest/single` per terminal.
+ */
+export async function getLatestGpsBatched(
+  terminalIds: number[],
+  concurrency = 6
+): Promise<ColorlightLatestGps[]> {
+  const out: ColorlightLatestGps[] = [];
+  for (let i = 0; i < terminalIds.length; i += concurrency) {
+    const slice = terminalIds.slice(i, i + concurrency);
+    const settled = await Promise.allSettled(
+      slice.map((id) => getLatestGpsForTerminal(id))
+    );
+    for (const s of settled) {
+      if (s.status === "fulfilled" && s.value) out.push(s.value);
+    }
+  }
+  return out;
+}
+
 export async function getTrack(
   terminalId: number | string,
   startTime: string,

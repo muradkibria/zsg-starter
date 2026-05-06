@@ -8,7 +8,7 @@
 // each browser hammering Colorlight directly.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getLatestGpsForAll, type ColorlightLatestGps } from "./client.js";
+import { listTerminals, getLatestGpsBatched, type ColorlightLatestGps } from "./client.js";
 import { getIO } from "../socket.js";
 
 const POLL_INTERVAL_MS = 10_000;
@@ -23,7 +23,8 @@ export function startColorlightGpsPoller() {
   const tick = async () => {
     let gps: ColorlightLatestGps[] = [];
     try {
-      gps = await getLatestGpsForAll("");
+      const terminals = await listTerminals();
+      gps = await getLatestGpsBatched(terminals.map((t) => t.id));
       consecutiveFailures = 0;
     } catch (err: any) {
       consecutiveFailures++;

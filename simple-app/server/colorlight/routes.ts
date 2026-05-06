@@ -9,7 +9,7 @@ import jwt from "jsonwebtoken";
 import {
   listTerminals,
   getTerminal,
-  getLatestGpsForAll,
+  getLatestGpsBatched,
   getLatestGpsForTerminal,
   getTrack,
   getHeatMap,
@@ -43,7 +43,8 @@ async function getGpsCached(): Promise<ColorlightLatestGps[]> {
   if (gpsCache && Date.now() - gpsCache.ts < GPS_TTL_MS) {
     return gpsCache.data;
   }
-  const data = await getLatestGpsForAll("");
+  const terminals = await getTerminalsCached();
+  const data = await getLatestGpsBatched(terminals.map((t) => t.id));
   gpsCache = { ts: Date.now(), data };
   return data;
 }
@@ -81,10 +82,11 @@ function terminalToBag(
 }
 
 function defaultDayWindow() {
+  // Use a rolling 24h window in UTC ISO format. Avoids timezone confusion
+  // between the user's locale, Railway's UTC server, and Colorlight's account
+  // timezone — and guarantees we always get something for the current shift.
   const end = new Date();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  // Colorlight expects YYYY-MM-DDTHH:mm:ss without timezone
+  const start = new Date(end.getTime() - 24 * 3600 * 1000);
   const fmt = (d: Date) => d.toISOString().slice(0, 19);
   return { startTime: fmt(start), endTime: fmt(end) };
 }
@@ -186,25 +188,27 @@ router.get("/fleet/live", async (_req, res, next) => {
   try {
     const [terminals, gps] = await Promise.all([getTerminalsCached(), getGpsCached()]);
     const map = gpsByTerminalId(gps);
+    // Return ALL terminals — even ones with no position or stale GPS.
+    // The frontend will render an offline marker at the last known position,
+    // or skip rendering entirely if no GPS has ever been reported.
     res.json(
-      terminals
-        .filter((t) => map.has(t.id)) // only ones with positions
-        .map((t) => {
-          const g = map.get(t.id)!;
-          const ageMs = Date.now() - new Date(g.reportTime).getTime();
-          return {
-            bagId: String(t.id),
-            name: t.title?.raw ?? `Terminal ${t.id}`,
-            lat: g.latitude,
-            lng: g.longitude,
-            speed: g.speed,
-            heading: g.direct,
-            lastGpsAt: g.reportTime,
-            status: ageMs < ACTIVE_GPS_THRESHOLD_MS ? "active" : "inactive",
-            riderId: null,
-            riderName: null,
-          };
-        })
+      terminals.map((t) => {
+        const g = map.get(t.id);
+        const ageMs = g ? Date.now() - new Date(g.reportTime).getTime() : Infinity;
+        const status = ageMs < ACTIVE_GPS_THRESHOLD_MS ? "active" : "inactive";
+        return {
+          bagId: String(t.id),
+          name: t.title?.raw ?? `Terminal ${t.id}`,
+          lat: g?.latitude ?? null,
+          lng: g?.longitude ?? null,
+          speed: g?.speed ?? null,
+          heading: g?.direct ?? null,
+          lastGpsAt: g?.reportTime ?? null,
+          status,
+          riderId: null,
+          riderName: null,
+        };
+      })
     );
   } catch (err) {
     next(err);
