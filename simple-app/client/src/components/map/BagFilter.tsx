@@ -41,34 +41,56 @@ export function BagFilter({ bags, selected, onChange }: BagFilterProps) {
     b.name.toLowerCase().includes(search.toLowerCase())
   );
 
-  const isAllSelected = selected.size === 0 || selected.size === bags.length;
-  const label = isAllSelected
+  // Three-state model:
+  //   isAllMode  → empty set, treated as "all bags shown"
+  //   isNoneMode → set contains "__none__" sentinel only, "no bags shown"
+  //   isSomeMode → set contains real bag IDs, only those shown
+  const isAllMode = selected.size === 0;
+  const isNoneMode = selected.has("__none__");
+
+  const visibleCount = isAllMode ? bags.length : isNoneMode ? 0 : selected.size;
+  const label = isAllMode
     ? `All bags (${bags.length})`
-    : `${selected.size} of ${bags.length} selected`;
+    : isNoneMode
+      ? `0 of ${bags.length} selected`
+      : `${selected.size} of ${bags.length} selected`;
 
   const toggleBag = (id: string) => {
-    const next = new Set(selected);
-    // If "all" was implied (empty set), starting to deselect means initialize with all minus this one
-    if (selected.size === 0) {
-      bags.forEach((b) => {
+    // Coming from "none" → switch to "some" with just this bag.
+    if (isNoneMode) {
+      onChange(new Set([id]));
+      return;
+    }
+
+    // Coming from "all" → switch to "some" with everything *except* this bag.
+    if (isAllMode) {
+      const next = new Set<string>();
+      for (const b of bags) {
         if (b.id !== id) next.add(b.id);
-      });
-    } else if (next.has(id)) {
+      }
+      // Edge case: only 1 bag total and user deselected it → go straight to "none"
+      onChange(next.size === 0 ? new Set(["__none__"]) : next);
+      return;
+    }
+
+    // We're in "some" mode — toggle this id in/out
+    const next = new Set(selected);
+    if (next.has(id)) {
       next.delete(id);
+      // If we just removed the last one, switch to "none" (not "all")
+      onChange(next.size === 0 ? new Set(["__none__"]) : next);
     } else {
       next.add(id);
+      onChange(next);
     }
-    // If user deselected all, treat empty set as "no filter" rather than "no bags"
-    onChange(next);
   };
 
   const selectAll = () => onChange(new Set());
-  const selectNone = () => onChange(new Set(["__none__"])); // sentinel for "explicitly empty"
+  const selectNone = () => onChange(new Set(["__none__"]));
 
-  // Treat the sentinel value or all-selected as "all"
   const isChecked = (id: string) => {
-    if (selected.size === 0) return true;
-    if (selected.has("__none__")) return false;
+    if (isAllMode) return true;
+    if (isNoneMode) return false;
     return selected.has(id);
   };
 
@@ -98,11 +120,11 @@ export function BagFilter({ bags, selected, onChange }: BagFilterProps) {
           </div>
 
           {/* Quick actions */}
-          <div className="border-b px-3 py-1.5 flex items-center justify-between text-xs">
+          <div className="border-b px-3 py-1.5 flex items-center gap-3 text-xs">
             <button
               onClick={selectAll}
               className="text-primary hover:underline disabled:opacity-50 disabled:no-underline"
-              disabled={isAllSelected}
+              disabled={isAllMode}
             >
               All
             </button>
@@ -110,12 +132,12 @@ export function BagFilter({ bags, selected, onChange }: BagFilterProps) {
             <button
               onClick={selectNone}
               className="text-primary hover:underline disabled:opacity-50 disabled:no-underline"
-              disabled={selected.has("__none__") || (selected.size === 1 && selected.has("__none__"))}
+              disabled={isNoneMode}
             >
               None
             </button>
             <span className="ml-auto text-muted-foreground">
-              {selected.size === 0 || isAllSelected ? bags.length : selected.size} on map
+              {visibleCount} on map
             </span>
           </div>
 
