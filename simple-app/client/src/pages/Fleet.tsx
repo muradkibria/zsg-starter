@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -409,6 +410,7 @@ function RegisterRiderDialog({
 
 export function Fleet() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
 
   const {
     data: bags = [],
@@ -474,26 +476,33 @@ export function Fleet() {
                     <TableHead>Rider</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Last GPS</TableHead>
+                    <TableHead className="w-10" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {bagsLoading
                     ? Array.from({ length: 4 }).map((_, i) => (
                         <TableRow key={i}>
-                          <TableCell colSpan={5}><Skeleton className="h-4 w-full" /></TableCell>
+                          <TableCell colSpan={6}><Skeleton className="h-4 w-full" /></TableCell>
                         </TableRow>
                       ))
                     : bags.length === 0
                     ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                          <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                             No terminals registered
                           </TableCell>
                         </TableRow>
                       )
                     : bags.map((bag) => (
-                        <TableRow key={bag.id}>
-                          <TableCell className="font-medium">{bag.name}</TableCell>
+                        <TableRow
+                          key={bag.id}
+                          className="cursor-pointer hover:bg-accent/50"
+                          onClick={() => navigate(`/fleet/${bag.id}`)}
+                        >
+                          <TableCell className="font-medium text-primary hover:underline">
+                            {bag.name}
+                          </TableCell>
                           <TableCell className="text-muted-foreground font-mono text-xs">
                             {bag.colorlight_device_id}
                           </TableCell>
@@ -507,6 +516,9 @@ export function Fleet() {
                             {bag.last_gps_at
                               ? new Date(bag.last_gps_at).toLocaleString()
                               : "—"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
                           </TableCell>
                         </TableRow>
                       ))}

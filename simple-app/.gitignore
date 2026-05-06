@@ -6,6 +6,12 @@ vite.config.ts.*
 *.tar.gz
 volume/
 
+# Local data store (rider profiles, documents) — see server/store/rider-store.ts
+data/
+
+# API capture exports — may contain sensitive data
+api-capture-*.json
+
 # Environment variables (local development only)
 .env
 .env.local

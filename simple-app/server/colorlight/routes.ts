@@ -20,6 +20,12 @@ import {
   type ColorlightTerminal,
   type ColorlightLatestGps,
 } from "./client.js";
+import {
+  getSessionsForBag,
+  groupSessionsByDay,
+  sessionsToCsv,
+} from "./sessions.js";
+import { getRider, getRiderByBagId } from "../store/rider-store.js";
 
 const ACTIVE_GPS_THRESHOLD_MS = 5 * 60 * 1000; // device counted as "active" if GPS within 5 min
 const TERMINAL_TTL_MS = 30_000;
@@ -332,6 +338,110 @@ router.get("/fleet/online-hours", async (_req, res, next) => {
         lastOnlineAt: e.lastOnlineTime,
       }))
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Sessions / timesheets (derived from GPS tracks) ──────────────────────────
+
+router.get("/bags/:id/sessions", async (req, res, next) => {
+  try {
+    const days = Math.min(31, Math.max(1, Number(req.query.days ?? 7)));
+    const sessions = await getSessionsForBag(req.params.id, days);
+    const byDay = groupSessionsByDay(sessions);
+    const totalSeconds = sessions.reduce((s, x) => s + x.duration_seconds, 0);
+    res.json({
+      bag_id: req.params.id,
+      days,
+      totalSessions: sessions.length,
+      totalSeconds,
+      totalHours: +(totalSeconds / 3600).toFixed(2),
+      byDay,
+      sessions,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/riders/:id/sessions", async (req, res, next) => {
+  try {
+    const rider = getRider(req.params.id);
+    if (!rider) { res.status(404).json({ error: "Rider not found" }); return; }
+    if (!rider.bag_id) {
+      res.json({
+        rider_id: rider.id,
+        bag_id: null,
+        days: 0,
+        totalSessions: 0,
+        totalSeconds: 0,
+        totalHours: 0,
+        byDay: [],
+        sessions: [],
+        message: "No bag assigned to this rider",
+      });
+      return;
+    }
+    const days = Math.min(31, Math.max(1, Number(req.query.days ?? 7)));
+    const sessions = await getSessionsForBag(rider.bag_id, days);
+    const byDay = groupSessionsByDay(sessions);
+    const totalSeconds = sessions.reduce((s, x) => s + x.duration_seconds, 0);
+    res.json({
+      rider_id: rider.id,
+      bag_id: rider.bag_id,
+      days,
+      totalSessions: sessions.length,
+      totalSeconds,
+      totalHours: +(totalSeconds / 3600).toFixed(2),
+      byDay,
+      sessions,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/riders/:id/sessions/export", async (req, res, next) => {
+  try {
+    const rider = getRider(req.params.id);
+    if (!rider) { res.status(404).json({ error: "Rider not found" }); return; }
+    if (!rider.bag_id) {
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="rider-${rider.id}-hours.csv"`);
+      res.send("rider_id,rider_name,bag_id,session_id,started_at,ended_at,duration_minutes,gps_points\n");
+      return;
+    }
+    const days = Math.min(31, Math.max(1, Number(req.query.days ?? 7)));
+    const sessions = await getSessionsForBag(rider.bag_id, days);
+    const csv = sessionsToCsv(rider, sessions);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="rider-${rider.id}-hours-${days}d.csv"`
+    );
+    res.send(csv);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Bag-level rider lookup that uses the rider store
+router.get("/bags/:bagId/rider", (req, res) => {
+  const rider = getRiderByBagId(req.params.bagId);
+  if (!rider) { res.status(404).json({ error: "No rider assigned to this bag" }); return; }
+  res.json(rider);
+});
+
+// Per-bag play stats over a custom window (used by the Reports timesheet view)
+router.get("/bags/:id/play-times", async (req, res, next) => {
+  try {
+    const days = Math.min(31, Math.max(1, Number(req.query.days ?? 7)));
+    const end = new Date();
+    const start = new Date(end.getTime() - days * 24 * 3600 * 1000);
+    const fmt = (d: Date) => d.toISOString().slice(0, 19);
+    const data = await getMediaPlayTimes(req.params.id, fmt(start), fmt(end));
+    res.json(data);
   } catch (err) {
     next(err);
   }

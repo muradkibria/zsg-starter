@@ -25,12 +25,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { initColorlight } = await import("./colorlight/client.js");
   const { liveRouter } = await import("./colorlight/routes.js");
   const { stubRouter } = await import("./colorlight/stub-router.js");
+  const { riderStoreRouter } = await import("./store/rider-routes.js");
   const { startColorlightGpsPoller } = await import("./colorlight/gps-poller.js");
 
-  // Always register the routers so the server can boot even if Colorlight is
-  // unreachable — individual requests will surface upstream errors via 502
-  // and the frontend renders error states per-page.
+  // Order matters — first matching route wins:
+  //   1. liveRouter        — Colorlight-backed (bags, GPS, media, plays, sessions)
+  //   2. riderStoreRouter  — our JSON-backed rider profiles + documents
+  //   3. stubRouter        — empty / 501 for everything else
+  // Always register so the server can boot even if Colorlight is unreachable —
+  // individual requests will surface upstream errors via 502 and the frontend
+  // renders error states per-page.
   app.use("/api", liveRouter);
+  app.use("/api", riderStoreRouter);
   app.use("/api", stubRouter);
 
   try {

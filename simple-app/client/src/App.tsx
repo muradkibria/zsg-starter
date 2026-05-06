@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Dashboard } from "@/pages/Dashboard";
 import { Fleet } from "@/pages/Fleet";
+import { BagDetail } from "@/pages/BagDetail";
 import { Media } from "@/pages/Media";
 import { Campaigns } from "@/pages/Campaigns";
 import { Zones } from "@/pages/Zones";
@@ -22,6 +23,7 @@ export default function App() {
           <Route element={<AppLayout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/fleet" element={<Fleet />} />
+            <Route path="/fleet/:bagId" element={<BagDetail />} />
             <Route path="/media" element={<Media />} />
             <Route path="/campaigns" element={<Campaigns />} />
             <Route path="/zones" element={<Zones />} />
