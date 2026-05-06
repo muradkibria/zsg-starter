@@ -387,3 +387,317 @@ export function getBaseURL() {
 export function getUsername() {
   return username;
 }
+
+// ── Write-mode safety gate ───────────────────────────────────────────────────
+// Defaults to OFF. All write methods below short-circuit unless this is true.
+export function writesEnabled(): boolean {
+  return process.env.COLORLIGHT_WRITES_ENABLED === "true";
+}
+
+// ── Media upload (TUS resumable protocol) ────────────────────────────────────
+
+export interface TusFileInfo {
+  uri: string;          // /wp-content/uploads/Tus/<uuid>
+  alreadyExists: boolean;
+}
+
+/** Search for an existing file by MD5 checksum (deduplication). */
+export async function searchByChecksum(md5: string): Promise<TusFileInfo | null> {
+  try {
+    const res = await client!.get("/wp-content/uploads/TusFileSearchByChecksum", {
+      headers: { "Upload-Checksum": `md5 ${md5}` },
+      maxRedirects: 0,
+      validateStatus: (s) => s < 500,
+    });
+    const loc = res.headers["location"];
+    if (loc) return { uri: loc, alreadyExists: true };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Initiate a fresh TUS upload. Returns the URI to PATCH chunks to.
+ * In safety-gate mode, returns a fake URI without contacting Colorlight.
+ */
+export async function tusCreate(
+  filename: string,
+  mimeType: string,
+  sizeBytes: number
+): Promise<TusFileInfo> {
+  if (!writesEnabled()) {
+    console.warn(`[colorlight DRY-RUN] tusCreate(${filename}, ${sizeBytes}b) — no upload performed`);
+    return { uri: `/dryrun/tus/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, alreadyExists: false };
+  }
+  // Real TUS create uses base64-encoded metadata
+  const meta = [
+    `filename ${Buffer.from(filename, "utf8").toString("base64")}`,
+    `filetype ${Buffer.from(mimeType, "utf8").toString("base64")}`,
+  ].join(",");
+  const res = await client!.post("/wp-content/uploads/Tus/files", null, {
+    headers: {
+      "Tus-Resumable": "1.0.0",
+      "Upload-Length": String(sizeBytes),
+      "Upload-Metadata": meta,
+    },
+    maxRedirects: 0,
+    validateStatus: (s) => s < 500,
+  });
+  const uri = res.headers["location"];
+  if (!uri) throw new Error(`TUS create returned no Location header (status ${res.status})`);
+  return { uri, alreadyExists: false };
+}
+
+/** Get current Upload-Offset for a TUS upload (for resume). */
+export async function tusHead(uri: string): Promise<number> {
+  if (!writesEnabled()) return 0;
+  const res = await client!.head(uri, {
+    headers: { "Tus-Resumable": "1.0.0" },
+    validateStatus: (s) => s < 500,
+  });
+  return Number(res.headers["upload-offset"] ?? 0);
+}
+
+/** PATCH a chunk to a TUS upload. */
+export async function tusUpload(uri: string, chunk: Buffer, offset: number): Promise<number> {
+  if (!writesEnabled()) {
+    console.warn(`[colorlight DRY-RUN] tusUpload(${uri}, ${chunk.length}b @ offset ${offset}) — discarded`);
+    return offset + chunk.length;
+  }
+  const res = await client!.patch(uri, chunk, {
+    headers: {
+      "Tus-Resumable": "1.0.0",
+      "Upload-Offset": String(offset),
+      "Content-Type": "application/offset+octet-stream",
+    },
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    validateStatus: (s) => s < 500,
+  });
+  return Number(res.headers["upload-offset"] ?? offset + chunk.length);
+}
+
+/**
+ * After a TUS upload completes, register it as a WordPress media attachment.
+ * This is what makes the file appear in the Colorlight Media library and
+ * generates the thumbnail / metadata.
+ */
+export async function registerMedia(tusUri: string, title: string): Promise<ColorlightMediaItem | null> {
+  if (!writesEnabled()) {
+    console.warn(`[colorlight DRY-RUN] registerMedia(${tusUri}, "${title}") — fake media object returned`);
+    return null;
+  }
+  // The TUS uri is like "/wp-content/uploads/Tus/<uuid>" — Colorlight wants just the uuid
+  const uploadURI = tusUri.replace(/^.*\/Tus\//, "").replace(/\?.*$/, "");
+  const FormData = (globalThis as any).FormData;
+  const form = new FormData();
+  form.append("uploadURI", uploadURI);
+  const res = await client!.post(
+    `/wp-json/wp/v2/media?title=${encodeURIComponent(title)}`,
+    form,
+    { maxBodyLength: Infinity }
+  );
+  return res.data as ColorlightMediaItem;
+}
+
+// ── Programs (playlists) ─────────────────────────────────────────────────────
+
+export interface ProgramMediaItem {
+  fileID: number;
+  filename: string;
+  source_url: string;          // from registered media
+  thumbnail_url?: string;      // video_thumbnail_jpg if video
+  file_type: string;           // "mp4" / "jpg" / etc.
+  type: "video" | "image";
+  duration_seconds: number;    // typically 10
+  width: number;               // 160
+  height: number;              // 120
+}
+
+const SCREEN_WIDTH = 160;
+const SCREEN_HEIGHT = 120;
+const SCREEN_SCALE = 0.89;
+
+/**
+ * Build the VSN program_info payload Colorlight expects.
+ * Maps a list of media items to one Page → one File Window → N children.
+ */
+function buildProgramInfo(name: string, mediaItems: ProgramMediaItem[]) {
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()}`;
+
+  return {
+    name,
+    displayName: name,
+    isCrop: 0,
+    id: 10,
+    type: "contents",
+    version: 4,
+    selectChild: 0,
+    addNum: 1,
+    overStage: false,
+    info: {
+      Information: { Width: SCREEN_WIDTH, Height: SCREEN_HEIGHT, Scale: SCREEN_SCALE },
+      Pages: [],
+    },
+    children: [
+      {
+        name: "Page1",
+        id: 11,
+        index: 1,
+        type: "page",
+        selectChild: 0,
+        addNum: 1,
+        info: {
+          AppointDuration: 3600000,
+          Opacity: 1,
+          LoopType: 1,
+          BgColor: "0xFF000000",
+          Regions: [],
+        },
+        children: [
+          {
+            name: "File Window",
+            id: 12,
+            index: 1,
+            type: "fileWindow",
+            vsnType: 3,
+            Rect: {
+              X: 0, Y: 0,
+              Width: SCREEN_WIDTH, Height: SCREEN_HEIGHT,
+              BorderWidth: 0, BorderColor: "#ffff00",
+            },
+            IsScheduleRegion: 0,
+            selectChild: null,
+            children: mediaItems.map((m, idx) => ({
+              id: Math.random(),
+              fileID: m.fileID,
+              file_type: m.file_type,
+              author: username,
+              date: now.toISOString().replace("T", " ").slice(0, 19),
+              modified_gmt: now.toISOString().slice(0, 19) + "Z",
+              date_gmt: now.toISOString().slice(0, 19) + "Z",
+              GMTDate: now.toISOString().slice(0, 19) + "Z",
+              name: m.filename,
+              type: m.type,
+              src: m.thumbnail_url ?? m.source_url,
+              source_url: m.source_url,
+              format_size: "",
+              attachment_program: [],
+              attachment_program_detail: [],
+              disdelete: false,
+              thumbnailSize: { width: "200", height: "150" },
+              fullSize: { width: m.width, height: m.height },
+              videoSize: m.type === "video" ? { width: m.width, height: m.height } : undefined,
+              length: m.duration_seconds * 1000,
+              durationInSecond: m.duration_seconds,
+              playLength: secondsToHms(m.duration_seconds),
+              mshare: [],
+              mfolder: null,
+              duration: null,
+              aws: {},
+              IsSchedule: 0,
+              Schedule: {
+                IsLimitTime: 0,
+                StartTime: "00:00:00",
+                EndTime: "23:59:59",
+                IsLimitDate: 0,
+                StartDay: dateStr,
+                StartDayTime: "00:00:00",
+                EndDay: dateStr,
+                EndDayTime: "23:59:59",
+                IsLimitWeek: 0,
+                LimitWeek: [1, 1, 1, 1, 1, 1, 1],
+              },
+              shareWithMe: false,
+              Trigger: { Type: "lightStrip", Value: "0" },
+              customTags: [],
+              source: "MEDIA.WEB",
+              video_thumbnail_jpg: m.thumbnail_url,
+              hover: idx === 0,
+              Duration: m.duration_seconds * 1000,
+              isShowAspectBtn: false,
+              ReserveAS: 0,
+              playTime: m.duration_seconds,
+              PlayTimes: "1",
+              inEffect: { Name: "No Effect", Type: 0, Time: 1500, webTime: 1.5 },
+            })),
+            badge: String(mediaItems.length),
+            icon: "perm_media",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function secondsToHms(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return [h, m, ss].map((x) => String(x).padStart(2, "0")).join(":");
+}
+
+export interface CreateProgramResponse {
+  id: number;
+  name: string;
+  vsn_name?: string;
+  dryRun?: boolean;
+}
+
+/** Create a program (playlist) from a list of media items. */
+export async function createProgram(
+  title: string,
+  mediaItems: ProgramMediaItem[]
+): Promise<CreateProgramResponse> {
+  if (!writesEnabled()) {
+    console.warn(
+      `[colorlight DRY-RUN] createProgram("${title}", ${mediaItems.length} item(s)) ` +
+      `— would have created a VSN program with ${mediaItems.length} children`
+    );
+    return { id: -1, name: title, dryRun: true };
+  }
+  const program_info = buildProgramInfo(title, mediaItems);
+  const res = await client!.post("/wp-json/wp/v2/programs", {
+    title,
+    Terminalgroup: [],
+    program_info,
+  });
+  return { id: res.data.id, name: res.data.title_raw ?? title, vsn_name: res.data.vsn_name };
+}
+
+/** Push a created program out to selected terminals. */
+export async function assignProgramToTerminals(
+  programId: number,
+  terminalGroupId: number,
+  terminalIds: number[],
+  pushToAllInGroup: boolean = false
+): Promise<{ success: boolean; dryRun?: boolean }> {
+  if (!writesEnabled()) {
+    console.warn(
+      `[colorlight DRY-RUN] assignProgramToTerminals(programId=${programId}, group=${terminalGroupId}, ` +
+      `terminals=[${terminalIds.join(",")}]${pushToAllInGroup ? ", all" : ""}) — NOT pushed to bags`
+    );
+    return { success: true, dryRun: true };
+  }
+  await client!.put(
+    `/wp-json/wp/v2/programs/${programId}?flag=terminalgroup`,
+    {
+      what: "assign_program_to_terminal_group",
+      to: {
+        terminals_groups: [
+          { all: pushToAllInGroup, id: terminalGroupId, terminals: terminalIds },
+        ],
+      },
+    }
+  );
+  return { success: true };
+}
+
+/** Verify a program's current terminal assignments. */
+export async function getProgramDetails(programId: number) {
+  if (!writesEnabled()) return { dryRun: true };
+  const res = await client!.get(`/wp-json/wp/v2/programs/${programId}/details`);
+  return res.data;
+}

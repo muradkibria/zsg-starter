@@ -22,22 +22,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ── LIVE mode: Colorlight Cloud only. No mock fallback. ──────────────────
   console.log("[routes] LIVE mode — connecting to Colorlight Cloud…");
 
-  const { initColorlight } = await import("./colorlight/client.js");
+  const { initColorlight, writesEnabled } = await import("./colorlight/client.js");
   const { liveRouter } = await import("./colorlight/routes.js");
+  const { publishRouter } = await import("./colorlight/publish-routes.js");
   const { stubRouter } = await import("./colorlight/stub-router.js");
   const { riderStoreRouter } = await import("./store/rider-routes.js");
   const { startColorlightGpsPoller } = await import("./colorlight/gps-poller.js");
 
   // Order matters — first matching route wins:
-  //   1. liveRouter        — Colorlight-backed (bags, GPS, media, plays, sessions)
-  //   2. riderStoreRouter  — our JSON-backed rider profiles + documents
-  //   3. stubRouter        — empty / 501 for everything else
+  //   1. publishRouter     — upload + deploy (gated by COLORLIGHT_WRITES_ENABLED)
+  //   2. liveRouter        — Colorlight-backed reads (bags, GPS, media, plays, sessions)
+  //   3. riderStoreRouter  — our JSON-backed rider profiles + documents
+  //   4. stubRouter        — empty / 501 for everything else
   // Always register so the server can boot even if Colorlight is unreachable —
   // individual requests will surface upstream errors via 502 and the frontend
   // renders error states per-page.
+  app.use("/api", publishRouter);
   app.use("/api", liveRouter);
   app.use("/api", riderStoreRouter);
   app.use("/api", stubRouter);
+
+  if (!writesEnabled()) {
+    console.warn(
+      "┌────────────────────────────────────────────────────────────\n" +
+      "│ [routes] COLORLIGHT_WRITES_ENABLED=false — DEV / dry-run mode\n" +
+      "│ Uploads, program creation, and bag assignments are LOGGED ONLY.\n" +
+      "│ No real Colorlight write traffic will occur. Riders are safe.\n" +
+      "│ Flip COLORLIGHT_WRITES_ENABLED=true on Railway when ready.\n" +
+      "└────────────────────────────────────────────────────────────"
+    );
+  } else {
+    console.warn(
+      "┌────────────────────────────────────────────────────────────\n" +
+      "│ [routes] COLORLIGHT_WRITES_ENABLED=true — LIVE write mode\n" +
+      "│ Upload + deploy actions WILL push to real Colorlight bags.\n" +
+      "└────────────────────────────────────────────────────────────"
+    );
+  }
 
   try {
     await initColorlight();
