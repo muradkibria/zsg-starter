@@ -78,10 +78,17 @@ export async function getSessionsForBag(
   return sessions;
 }
 
+// Colorlight's `serverTime` is UTC but doesn't include a "Z" suffix, so we
+// have to add one before parsing — otherwise Date() interprets in the local
+// timezone of whatever server this runs on, which can be wildly wrong.
+function asUtc(t: string): string {
+  return t.endsWith("Z") ? t : t + "Z";
+}
+
 function computeSessions(bagId: string, rawPoints: ColorlightTrackPoint[]): RiderSession[] {
   if (rawPoints.length === 0) return [];
 
-  // De-dupe and sort by serverTime (Colorlight's authoritative timestamp)
+  // De-dupe and sort by serverTime (Colorlight's authoritative UTC timestamp)
   const seen = new Set<string>();
   const sorted = rawPoints
     .filter((p) => {
@@ -91,24 +98,24 @@ function computeSessions(bagId: string, rawPoints: ColorlightTrackPoint[]): Ride
       return true;
     })
     .sort(
-      (a, b) => new Date(a.serverTime).getTime() - new Date(b.serverTime).getTime()
+      (a, b) => new Date(asUtc(a.serverTime)).getTime() - new Date(asUtc(b.serverTime)).getTime()
     );
 
   const sessions: RiderSession[] = [];
-  let curStart = sorted[0].serverTime;
-  let curEnd = sorted[0].serverTime;
+  let curStart = asUtc(sorted[0].serverTime);
+  let curEnd = asUtc(sorted[0].serverTime);
   let curPoints = 1;
 
   for (let i = 1; i < sorted.length; i++) {
-    const gap =
-      new Date(sorted[i].serverTime).getTime() - new Date(curEnd).getTime();
+    const pointStamp = asUtc(sorted[i].serverTime);
+    const gap = new Date(pointStamp).getTime() - new Date(curEnd).getTime();
     if (gap > SESSION_GAP_MS) {
       sessions.push(buildSession(bagId, curStart, curEnd, curPoints));
-      curStart = sorted[i].serverTime;
-      curEnd = sorted[i].serverTime;
+      curStart = pointStamp;
+      curEnd = pointStamp;
       curPoints = 1;
     } else {
-      curEnd = sorted[i].serverTime;
+      curEnd = pointStamp;
       curPoints++;
     }
   }

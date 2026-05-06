@@ -44,9 +44,18 @@ export function startColorlightGpsPoller() {
     let emitted = 0;
     for (const p of gps) {
       if (p.latitude == null || p.longitude == null) continue;
+      // serverTime is the authoritative UTC stamp; reportTime is in the
+      // tenant's local timezone (no offset suffix), so it would mis-parse
+      // on a UTC server like Railway.
+      const stableKey = p.serverTime ?? p.reportTime;
       const last = lastReportTimeByTerminal.get(p.terminalId);
-      if (last === p.reportTime) continue; // unchanged
-      lastReportTimeByTerminal.set(p.terminalId, p.reportTime);
+      if (last === stableKey) continue;
+      lastReportTimeByTerminal.set(p.terminalId, stableKey);
+
+      const utcTimestamp =
+        p.serverTime
+          ? (p.serverTime.endsWith("Z") ? p.serverTime : p.serverTime + "Z")
+          : p.reportTime;
 
       io.emit("bag:position", {
         bagId: String(p.terminalId),
@@ -54,7 +63,7 @@ export function startColorlightGpsPoller() {
         lng: p.longitude,
         speed: p.speed ?? null,
         heading: p.direct ?? null,
-        timestamp: p.reportTime,
+        timestamp: utcTimestamp,
       });
       emitted++;
     }

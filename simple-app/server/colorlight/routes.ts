@@ -27,9 +27,40 @@ import {
 } from "./sessions.js";
 import { getRider, getRiderByBagId } from "../store/rider-store.js";
 
-const ACTIVE_GPS_THRESHOLD_MS = 5 * 60 * 1000; // device counted as "active" if GPS within 5 min
+// Device counts as "active" if its last GPS report was within the threshold.
+// 90s comfortably covers the ~30s normal Colorlight reporting interval plus a
+// network blip, but flips to "offline" quickly enough to match Colorlight's
+// own online indicator.
+const ACTIVE_GPS_THRESHOLD_MS = 90 * 1000;
 const TERMINAL_TTL_MS = 30_000;
 const GPS_TTL_MS = 5_000;
+
+/**
+ * Parse Colorlight `serverTime` (UTC, no Z) reliably regardless of where this
+ * server runs. Falls back to `reportTime` (which is in the tenant's local
+ * timezone) only if serverTime is missing.
+ */
+function parseColorlightUtc(serverTime: string | undefined, reportTime: string | undefined): number {
+  if (serverTime) {
+    const s = serverTime.endsWith("Z") ? serverTime : serverTime + "Z";
+    const ms = new Date(s).getTime();
+    if (!Number.isNaN(ms)) return ms;
+  }
+  if (reportTime) {
+    // Last resort — interpret as UTC even though it might be tenant-local.
+    // Inaccurate but safer than crashing.
+    const s = reportTime.endsWith("Z") ? reportTime : reportTime + "Z";
+    const ms = new Date(s).getTime();
+    if (!Number.isNaN(ms)) return ms;
+  }
+  return 0;
+}
+
+function utcStamp(serverTime: string | undefined, reportTime: string | undefined): string | null {
+  if (serverTime) return serverTime.endsWith("Z") ? serverTime : serverTime + "Z";
+  if (reportTime) return reportTime.endsWith("Z") ? reportTime : reportTime + "Z";
+  return null;
+}
 
 // ── In-memory cache (shared across requests) ─────────────────────────────────
 
@@ -68,7 +99,8 @@ function terminalToBag(
   gps: ColorlightLatestGps | undefined
 ) {
   const id = String(t.id);
-  const gpsAge = gps ? Date.now() - new Date(gps.reportTime).getTime() : Infinity;
+  const reportMs = gps ? parseColorlightUtc(gps.serverTime, gps.reportTime) : 0;
+  const gpsAge = reportMs > 0 ? Date.now() - reportMs : Infinity;
   const isActive = gpsAge < ACTIVE_GPS_THRESHOLD_MS;
 
   return {
@@ -81,7 +113,7 @@ function terminalToBag(
     last_lng: gps?.longitude ?? null,
     last_speed: gps?.speed ?? null,
     last_heading: gps?.direct ?? null,
-    last_gps_at: gps?.reportTime ?? null,
+    last_gps_at: gps ? utcStamp(gps.serverTime, gps.reportTime) : null,
     created: t.date ?? null,
     expand: { rider_id: null },
   };
@@ -159,7 +191,7 @@ router.get("/bags/:id/route", async (req, res, next) => {
       (track.data ?? []).map((p) => ({
         lat: p.latitude,
         lng: p.longitude,
-        timestamp: p.serverTime ?? p.clientTime,
+        timestamp: utcStamp(p.serverTime, p.clientTime),
       }))
     );
   } catch (err) {
@@ -180,7 +212,7 @@ router.get("/bags/:id/gps", async (req, res, next) => {
         lng: p.longitude,
         speed: null,
         heading: null,
-        created: p.serverTime ?? p.clientTime,
+        created: utcStamp(p.serverTime, p.clientTime),
       }))
     );
   } catch (err) {
@@ -200,7 +232,8 @@ router.get("/fleet/live", async (_req, res, next) => {
     res.json(
       terminals.map((t) => {
         const g = map.get(t.id);
-        const ageMs = g ? Date.now() - new Date(g.reportTime).getTime() : Infinity;
+        const reportMs = g ? parseColorlightUtc(g.serverTime, g.reportTime) : 0;
+        const ageMs = reportMs > 0 ? Date.now() - reportMs : Infinity;
         const status = ageMs < ACTIVE_GPS_THRESHOLD_MS ? "active" : "inactive";
         return {
           bagId: String(t.id),
@@ -209,7 +242,7 @@ router.get("/fleet/live", async (_req, res, next) => {
           lng: g?.longitude ?? null,
           speed: g?.speed ?? null,
           heading: g?.direct ?? null,
-          lastGpsAt: g?.reportTime ?? null,
+          lastGpsAt: g ? utcStamp(g.serverTime, g.reportTime) : null,
           status,
           riderId: null,
           riderName: null,
