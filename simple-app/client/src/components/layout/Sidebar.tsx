@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, Truck, Image, Megaphone, MapPin, BarChart2, ClipboardList, SunMedium } from "lucide-react";
+import { LayoutDashboard, Truck, Image, ListMusic, Megaphone, MapPin, BarChart2, ClipboardList, SunMedium } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -7,6 +7,7 @@ const nav = [
   { to: "/fleet", label: "Fleet", icon: Truck },
   { to: "/brightness", label: "Brightness", icon: SunMedium },
   { to: "/media", label: "Media", icon: Image },
+  { to: "/playlists", label: "Playlists", icon: ListMusic },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone },
   { to: "/zones", label: "Zones", icon: MapPin },
   { to: "/reports", label: "Reports", icon: BarChart2 },

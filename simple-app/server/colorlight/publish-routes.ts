@@ -135,7 +135,14 @@ router.delete("/uploads/dev-queue/:id", (req, res) => {
   res.json({ success: true });
 });
 
-// ── Deploy: take an uploaded file + a list of bag IDs, push it ───────────────
+// ── Deploy: DEPRECATED single-file path ──────────────────────────────────────
+// This endpoint used to push a single file as its own one-item program. That
+// behaviour overwrites whatever was on the bag (a Colorlight bag runs ONE
+// program at a time). The Playlists feature is the proper way to push multiple
+// ads in order.
+//
+// For backwards compatibility this still works — it just creates a new
+// single-item playlist under the hood. Prefer POST /api/playlists/:id/deploy.
 
 router.post("/deploy", async (req, res, next) => {
   try {

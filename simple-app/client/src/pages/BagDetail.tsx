@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { ErrorState } from "@/components/ui/error-state";
 import {
   ArrowLeft, Save, Loader2, Phone, Mail, MapPin, FileText, Plus, Trash2,
-  Download, Clock, ExternalLink, Truck,
+  Download, Clock, ExternalLink, Truck, ListMusic, ShieldAlert,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -179,6 +179,9 @@ export function BagDetail() {
       {/* ── Bag stats ── */}
       <BagStatsCard bag={bagQ.data} loading={bagQ.isLoading} error={bagQ.isError} />
 
+      {/* ── Currently playing ── */}
+      <CurrentlyPlayingCard bagId={bagId} />
+
       {/* ── Rider profile ── */}
       <RiderSection
         bagId={bagId}
@@ -212,6 +215,147 @@ export function BagDetail() {
         sessionsQ={sessionsQ}
       />
     </div>
+  );
+}
+
+// ── Currently-playing card ───────────────────────────────────────────────────
+
+interface PlaylistItemForCard {
+  media_id: string;
+  filename: string;
+  duration_seconds: number;
+  file_type: string;
+}
+interface PlaylistDeployment {
+  bag_id: string;
+  program_id: number;
+  program_name: string;
+  deployed_at: string;
+  dry_run: boolean;
+}
+interface PlaylistForCard {
+  id: string;
+  name: string;
+  items: PlaylistItemForCard[];
+  deployed_to: PlaylistDeployment[];
+}
+
+function CurrentlyPlayingCard({ bagId }: { bagId: string }) {
+  const qc = useQueryClient();
+  const playlistQ = useQuery<PlaylistForCard | null>({
+    queryKey: ["bag-playlist", bagId],
+    queryFn: async () => {
+      try {
+        return await api.get<PlaylistForCard>(`/bags/${bagId}/playlist`);
+      } catch (err: any) {
+        if (err?.status === 404) return null;
+        throw err;
+      }
+    },
+    retry: false,
+  });
+
+  const unassign = useMutation({
+    mutationFn: () => {
+      if (!playlistQ.data) throw new Error("No playlist to unassign");
+      return api.post(`/playlists/${playlistQ.data.id}/unassign`, { bagId });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["bag-playlist", bagId] });
+      qc.invalidateQueries({ queryKey: ["playlists"] });
+    },
+  });
+
+  const playlist = playlistQ.data;
+
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <ListMusic className="h-4 w-4 text-muted-foreground" />
+            Currently playing
+          </h3>
+          <Link
+            to="/playlists"
+            className="text-xs text-primary hover:underline"
+          >
+            Manage playlists →
+          </Link>
+        </div>
+
+        {playlistQ.isLoading ? (
+          <Skeleton className="h-12 w-full" />
+        ) : !playlist ? (
+          <div className="text-sm text-muted-foreground bg-muted/40 border rounded-md px-3 py-3">
+            <p className="font-medium text-foreground">Not yet managed by CMS</p>
+            <p className="text-xs mt-1">
+              This bag is still running whatever program was assigned via Colorlight directly.
+              To take over from this CMS, build a playlist and deploy it to this bag.
+            </p>
+            <Link
+              to="/playlists"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-2"
+            >
+              <Plus className="h-3 w-3" /> Create or pick a playlist
+            </Link>
+          </div>
+        ) : (
+          <>
+            <div className="border rounded-md p-3 bg-muted/20">
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <Link
+                    to="/playlists"
+                    className="text-sm font-semibold text-primary hover:underline"
+                  >
+                    {playlist.name}
+                  </Link>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {playlist.items.length} item{playlist.items.length !== 1 ? "s" : ""} ·{" "}
+                    {playlist.items.reduce((s, i) => s + i.duration_seconds, 0)}s loop
+                  </p>
+                </div>
+                {playlist.deployed_to.find((d) => d.bag_id === bagId)?.dry_run && (
+                  <span className="inline-flex items-center gap-1 text-[10px] bg-amber-50 text-amber-900 border border-amber-200 rounded px-1.5 py-0.5">
+                    <ShieldAlert className="h-2.5 w-2.5" /> Deployed in dev mode
+                  </span>
+                )}
+              </div>
+              <ol className="space-y-0.5 list-decimal list-inside">
+                {playlist.items.map((item) => (
+                  <li key={item.media_id} className="text-xs text-muted-foreground truncate">
+                    <span className="text-foreground">{item.filename}</span>
+                    <span className="ml-2 tabular-nums">{item.duration_seconds}s</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div className="flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive text-xs h-7"
+                onClick={() => {
+                  if (
+                    confirm(
+                      `Unassign "${playlist.name}" from this bag?\n\n` +
+                      "Note: this only updates the CMS. The bag will keep playing the last-pushed program until you push something else."
+                    )
+                  ) {
+                    unassign.mutate();
+                  }
+                }}
+                disabled={unassign.isPending}
+              >
+                <Trash2 className="h-3 w-3 mr-1" />
+                Unassign from this bag
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
