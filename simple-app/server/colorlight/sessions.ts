@@ -33,8 +33,16 @@ const SESSION_GAP_MS = 5 * 60 * 1000;
 
 // ── Sessions for a single bag, over the last N days ──────────────────────────
 
-const sessionsCache = new Map<string, { ts: number; data: RiderSession[] }>();
-const SESSIONS_TTL_MS = 5 * 60 * 1000; // 5min cache — sessions don't change retroactively
+interface CacheEntry {
+  ts: number;
+  data: RiderSession[];
+  ttl: number;       // how long this entry is valid (ms)
+}
+
+const sessionsCache = new Map<string, CacheEntry>();
+const FRESH_TTL_MS = 5 * 60 * 1000;     // all days succeeded → 5 min cache
+const PARTIAL_TTL_MS = 60 * 1000;       // some days failed → 1 min cache (retry sooner)
+const FETCH_CONCURRENCY = 3;            // simultaneous /track calls per bag
 
 export async function getSessionsForBag(
   bagId: string,
@@ -42,40 +50,76 @@ export async function getSessionsForBag(
 ): Promise<RiderSession[]> {
   const cacheKey = `${bagId}:${days}`;
   const cached = sessionsCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < SESSIONS_TTL_MS) {
+  if (cached && Date.now() - cached.ts < cached.ttl) {
     return cached.data;
   }
 
-  const points: ColorlightTrackPoint[] = [];
+  // Build the list of day windows we need
   const now = new Date();
-
-  // Fetch each day separately so partial failures don't kill the whole window
+  const dayWindows: { offset: number; start: string; end: string }[] = [];
   for (let dayOffset = 0; dayOffset < days; dayOffset++) {
     const dayEnd = new Date(now);
     dayEnd.setUTCDate(now.getUTCDate() - dayOffset);
     dayEnd.setUTCHours(23, 59, 59, 999);
-
     const dayStart = new Date(dayEnd);
     dayStart.setUTCHours(0, 0, 0, 0);
-
     const fmt = (d: Date) => d.toISOString().slice(0, 19);
+    dayWindows.push({ offset: dayOffset, start: fmt(dayStart), end: fmt(dayEnd) });
+  }
 
-    try {
-      const track = await getTrack(bagId, fmt(dayStart), fmt(dayEnd));
-      if (Array.isArray(track?.data)) {
-        points.push(...track.data);
+  // Fetch in small parallel batches (faster than sequential, gentler than fan-out)
+  const points: ColorlightTrackPoint[] = [];
+  let successes = 0;
+  let failures = 0;
+  let lastError: Error | null = null;
+
+  for (let i = 0; i < dayWindows.length; i += FETCH_CONCURRENCY) {
+    const batch = dayWindows.slice(i, i + FETCH_CONCURRENCY);
+    const results = await Promise.allSettled(
+      batch.map((w) => getTrack(bagId, w.start, w.end))
+    );
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j];
+      const w = batch[j];
+      if (r.status === "fulfilled" && Array.isArray(r.value?.data)) {
+        points.push(...r.value.data);
+        successes++;
+      } else {
+        failures++;
+        const err = r.status === "rejected" ? (r.reason as Error) : new Error("Unexpected response shape");
+        lastError = err;
+        console.warn(
+          `[sessions] Failed to fetch day -${w.offset} for bag ${bagId}:`,
+          err?.message ?? err
+        );
       }
-    } catch (err) {
-      console.warn(
-        `[sessions] Failed to fetch day -${dayOffset} for bag ${bagId}:`,
-        (err as Error).message
-      );
     }
   }
 
+  // CRITICAL: if every single day failed, this is an upstream problem, not a
+  // legitimate empty timesheet. Throw so the route surfaces 502 and the
+  // frontend renders the error state — and so we DO NOT poison the cache
+  // with an empty array (this was the bug that caused yesterday's blank
+  // timesheet for ~5 min after a transient Colorlight blip).
+  if (successes === 0 && failures > 0) {
+    throw new Error(
+      `Could not load any GPS history for bag ${bagId} (all ${failures} day(s) failed). ` +
+      `Last error: ${lastError?.message ?? "unknown"}`
+    );
+  }
+
   const sessions = computeSessions(bagId, points);
-  sessionsCache.set(cacheKey, { ts: Date.now(), data: sessions });
+
+  // Cache normally on full success; shorter TTL if some days failed so we
+  // retry the missing days sooner.
+  const ttl = failures > 0 ? PARTIAL_TTL_MS : FRESH_TTL_MS;
+  sessionsCache.set(cacheKey, { ts: Date.now(), data: sessions, ttl });
   return sessions;
+}
+
+/** Test/admin helper — wipe the sessions cache. */
+export function clearSessionsCache() {
+  sessionsCache.clear();
 }
 
 // Colorlight's `serverTime` is UTC but doesn't include a "Z" suffix, so we
