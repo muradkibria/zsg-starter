@@ -12,6 +12,7 @@ import {
   ArrowLeft, Save, Loader2, Phone, Mail, MapPin, FileText, Plus, Trash2,
   Download, Clock, ExternalLink, Truck, ListMusic, ShieldAlert,
 } from "lucide-react";
+import { TimeRangePicker, defaultRange, type TimeRange } from "@/components/map/TimeRangePicker";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -148,11 +149,19 @@ export function BagDetail() {
     retry: false,
   });
 
-  // Sessions (Colorlight GPS-derived)
-  const [days, setDays] = useState(7);
+  // Sessions (Colorlight GPS-derived). Default to last 7 days.
+  const [timeRange, setTimeRange] = useState<TimeRange>(() => {
+    const endMs = Date.now();
+    return { startMs: endMs - 7 * 24 * 3600 * 1000, endMs, preset: "last7d", label: "Last 7 days" };
+  });
+  const sessionStart = new Date(timeRange.startMs).toISOString();
+  const sessionEnd = new Date(timeRange.endMs).toISOString();
   const sessionsQ = useQuery<SessionsResponse>({
-    queryKey: ["bag-sessions", bagId, days],
-    queryFn: () => api.get(`/bags/${bagId}/sessions?days=${days}`),
+    queryKey: ["bag-sessions", bagId, sessionStart, sessionEnd],
+    queryFn: () =>
+      api.get(
+        `/bags/${bagId}/sessions?startTime=${encodeURIComponent(sessionStart)}&endTime=${encodeURIComponent(sessionEnd)}`
+      ),
     enabled: !!bagId,
   });
 
@@ -210,8 +219,8 @@ export function BagDetail() {
         bagId={bagId}
         riderId={riderQ.data?.id ?? null}
         riderName={riderQ.data?.name ?? bagQ.data?.name ?? "this bag"}
-        days={days}
-        setDays={setDays}
+        timeRange={timeRange}
+        setTimeRange={setTimeRange}
         sessionsQ={sessionsQ}
       />
     </div>
@@ -808,22 +817,25 @@ function TimesheetSection({
   bagId,
   riderId,
   riderName,
-  days,
-  setDays,
+  timeRange,
+  setTimeRange,
   sessionsQ,
 }: {
   bagId: string;
   riderId: string | null;
   riderName: string;
-  days: number;
-  setDays: (n: number) => void;
+  timeRange: TimeRange;
+  setTimeRange: (r: TimeRange) => void;
   sessionsQ: ReturnType<typeof useQuery<SessionsResponse>>;
 }) {
   const data = sessionsQ.data;
 
   const downloadCsv = () => {
     if (riderId) {
-      window.location.href = `/api/riders/${riderId}/sessions/export?days=${days}`;
+      const startStr = new Date(timeRange.startMs).toISOString();
+      const endStr = new Date(timeRange.endMs).toISOString();
+      window.location.href =
+        `/api/riders/${riderId}/sessions/export?startTime=${encodeURIComponent(startStr)}&endTime=${encodeURIComponent(endStr)}`;
     }
   };
 
@@ -842,17 +854,7 @@ function TimesheetSection({
           </div>
 
           <div className="flex items-center gap-2">
-            <select
-              value={days}
-              onChange={(e) => setDays(Number(e.target.value))}
-              className="border rounded-md px-2 py-1 text-xs bg-background h-7"
-            >
-              <option value={1}>Today</option>
-              <option value={3}>Last 3 days</option>
-              <option value={7}>Last 7 days</option>
-              <option value={14}>Last 14 days</option>
-              <option value={30}>Last 30 days</option>
-            </select>
+            <TimeRangePicker value={timeRange} onChange={setTimeRange} />
             {riderId && (
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={downloadCsv}>
                 <Download className="h-3 w-3" /> CSV

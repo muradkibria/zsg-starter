@@ -43,28 +43,62 @@ const sessionsCache = new Map<string, CacheEntry>();
 const FRESH_TTL_MS = 5 * 60 * 1000;     // all days succeeded → 5 min cache
 const PARTIAL_TTL_MS = 60 * 1000;       // some days failed → 1 min cache (retry sooner)
 const FETCH_CONCURRENCY = 3;            // simultaneous /track calls per bag
+const MAX_RANGE_MS = 31 * 24 * 3600 * 1000; // safety cap
+
+export interface SessionsRange {
+  /** Inclusive start of the window in epoch ms. */
+  startMs: number;
+  /** Inclusive end of the window in epoch ms. */
+  endMs: number;
+}
+
+/** Derive a SessionsRange from a "rolling N days" parameter (legacy). */
+export function rangeFromDays(days: number): SessionsRange {
+  const endMs = Date.now();
+  const startMs = endMs - days * 24 * 3600 * 1000;
+  return { startMs, endMs };
+}
 
 export async function getSessionsForBag(
   bagId: string,
-  days = 7
+  rangeOrDays: SessionsRange | number = 7
 ): Promise<RiderSession[]> {
-  const cacheKey = `${bagId}:${days}`;
+  // Normalise the input — accept either a {startMs, endMs} or a "days" number.
+  let { startMs, endMs }: SessionsRange =
+    typeof rangeOrDays === "number"
+      ? rangeFromDays(rangeOrDays)
+      : { startMs: rangeOrDays.startMs, endMs: rangeOrDays.endMs };
+
+  if (startMs > endMs) [startMs, endMs] = [endMs, startMs];
+  if (endMs - startMs > MAX_RANGE_MS) startMs = endMs - MAX_RANGE_MS;
+
+  // Cache key normalised to whole minutes so adjacent requests dedupe
+  const cacheKey = `${bagId}:${Math.floor(startMs / 60000)}:${Math.floor(endMs / 60000)}`;
   const cached = sessionsCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < cached.ttl) {
     return cached.data;
   }
 
-  // Build the list of day windows we need
-  const now = new Date();
+  // Build day-aligned windows that cover [startMs, endMs] inclusively.
+  // Walks from endMs backwards in 24h chunks. Each window is clipped to the
+  // requested range so partial first/last days don't pull data outside it.
+  const fmt = (d: Date) => d.toISOString().slice(0, 19);
   const dayWindows: { offset: number; start: string; end: string }[] = [];
-  for (let dayOffset = 0; dayOffset < days; dayOffset++) {
-    const dayEnd = new Date(now);
-    dayEnd.setUTCDate(now.getUTCDate() - dayOffset);
-    dayEnd.setUTCHours(23, 59, 59, 999);
-    const dayStart = new Date(dayEnd);
+  let cursorEnd = new Date(endMs);
+  cursorEnd.setUTCHours(23, 59, 59, 999);
+  let offset = 0;
+  while (cursorEnd.getTime() >= startMs) {
+    const dayStart = new Date(cursorEnd);
     dayStart.setUTCHours(0, 0, 0, 0);
-    const fmt = (d: Date) => d.toISOString().slice(0, 19);
-    dayWindows.push({ offset: dayOffset, start: fmt(dayStart), end: fmt(dayEnd) });
+
+    const clippedStart = dayStart.getTime() < startMs ? new Date(startMs) : dayStart;
+    const clippedEnd = cursorEnd.getTime() > endMs ? new Date(endMs) : cursorEnd;
+
+    dayWindows.push({ offset, start: fmt(clippedStart), end: fmt(clippedEnd) });
+
+    cursorEnd = new Date(dayStart.getTime() - 1);  // step back to previous day's 23:59
+    offset++;
+    if (offset > 35) break; // safety net — should never hit thanks to MAX_RANGE_MS
   }
 
   // Fetch in small parallel batches (faster than sequential, gentler than fan-out)

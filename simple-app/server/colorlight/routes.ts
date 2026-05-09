@@ -402,15 +402,52 @@ router.get("/fleet/online-hours", async (_req, res, next) => {
 
 // ── Sessions / timesheets (derived from GPS tracks) ──────────────────────────
 
+/**
+ * Resolve the requested timesheet window. Supports either:
+ *   - ?startTime=ISO&endTime=ISO  (preferred — explicit range)
+ *   - ?days=N                     (legacy — rolling N days back from now)
+ *   - (none)                      → defaults to last 7 days
+ */
+function resolveSessionsRange(req: { query: Record<string, any> }): {
+  startMs: number;
+  endMs: number;
+  days: number;
+  windowLabel: string;
+} {
+  const explicitStart = Date.parse(String(req.query?.startTime ?? ""));
+  const explicitEnd = Date.parse(String(req.query?.endTime ?? ""));
+
+  if (Number.isFinite(explicitStart) && Number.isFinite(explicitEnd)) {
+    let s = explicitStart, e = explicitEnd;
+    if (s > e) [s, e] = [e, s];
+    const daysSpan = Math.max(1, Math.ceil((e - s) / (24 * 3600 * 1000)));
+    const startSlug = new Date(s).toISOString().slice(0, 10);
+    const endSlug = new Date(e).toISOString().slice(0, 10);
+    return {
+      startMs: s,
+      endMs: e,
+      days: daysSpan,
+      windowLabel: startSlug === endSlug ? startSlug : `${startSlug}_to_${endSlug}`,
+    };
+  }
+
+  const days = Math.min(31, Math.max(1, Number(req.query?.days ?? 7)));
+  const endMs = Date.now();
+  const startMs = endMs - days * 24 * 3600 * 1000;
+  return { startMs, endMs, days, windowLabel: `${days}d` };
+}
+
 router.get("/bags/:id/sessions", async (req, res, next) => {
   try {
-    const days = Math.min(31, Math.max(1, Number(req.query.days ?? 7)));
-    const sessions = await getSessionsForBag(req.params.id, days);
+    const range = resolveSessionsRange(req);
+    const sessions = await getSessionsForBag(req.params.id, { startMs: range.startMs, endMs: range.endMs });
     const byDay = groupSessionsByDay(sessions);
     const totalSeconds = sessions.reduce((s, x) => s + x.duration_seconds, 0);
     res.json({
       bag_id: req.params.id,
-      days,
+      days: range.days,
+      startTime: new Date(range.startMs).toISOString(),
+      endTime: new Date(range.endMs).toISOString(),
       totalSessions: sessions.length,
       totalSeconds,
       totalHours: +(totalSeconds / 3600).toFixed(2),
@@ -426,11 +463,14 @@ router.get("/riders/:id/sessions", async (req, res, next) => {
   try {
     const rider = getRider(req.params.id);
     if (!rider) { res.status(404).json({ error: "Rider not found" }); return; }
+    const range = resolveSessionsRange(req);
     if (!rider.bag_id) {
       res.json({
         rider_id: rider.id,
         bag_id: null,
-        days: 0,
+        days: range.days,
+        startTime: new Date(range.startMs).toISOString(),
+        endTime: new Date(range.endMs).toISOString(),
         totalSessions: 0,
         totalSeconds: 0,
         totalHours: 0,
@@ -440,14 +480,15 @@ router.get("/riders/:id/sessions", async (req, res, next) => {
       });
       return;
     }
-    const days = Math.min(31, Math.max(1, Number(req.query.days ?? 7)));
-    const sessions = await getSessionsForBag(rider.bag_id, days);
+    const sessions = await getSessionsForBag(rider.bag_id, { startMs: range.startMs, endMs: range.endMs });
     const byDay = groupSessionsByDay(sessions);
     const totalSeconds = sessions.reduce((s, x) => s + x.duration_seconds, 0);
     res.json({
       rider_id: rider.id,
       bag_id: rider.bag_id,
-      days,
+      days: range.days,
+      startTime: new Date(range.startMs).toISOString(),
+      endTime: new Date(range.endMs).toISOString(),
       totalSessions: sessions.length,
       totalSeconds,
       totalHours: +(totalSeconds / 3600).toFixed(2),
@@ -463,19 +504,19 @@ router.get("/riders/:id/sessions/export", async (req, res, next) => {
   try {
     const rider = getRider(req.params.id);
     if (!rider) { res.status(404).json({ error: "Rider not found" }); return; }
+    const range = resolveSessionsRange(req);
     if (!rider.bag_id) {
       res.setHeader("Content-Type", "text/csv");
       res.setHeader("Content-Disposition", `attachment; filename="rider-${rider.id}-hours.csv"`);
       res.send("rider_id,rider_name,bag_id,session_id,started_at,ended_at,duration_minutes,gps_points\n");
       return;
     }
-    const days = Math.min(31, Math.max(1, Number(req.query.days ?? 7)));
-    const sessions = await getSessionsForBag(rider.bag_id, days);
+    const sessions = await getSessionsForBag(rider.bag_id, { startMs: range.startMs, endMs: range.endMs });
     const csv = sessionsToCsv(rider, sessions);
     res.setHeader("Content-Type", "text/csv");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="rider-${rider.id}-hours-${days}d.csv"`
+      `attachment; filename="rider-${rider.id}-hours-${range.windowLabel}.csv"`
     );
     res.send(csv);
   } catch (err) {

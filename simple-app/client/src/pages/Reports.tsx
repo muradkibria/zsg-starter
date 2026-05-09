@@ -7,8 +7,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, Clock, Film, Image as ImageIcon, ExternalLink } from "lucide-react";
+import { Download, Clock, Film, Image as ImageIcon } from "lucide-react";
 import { ErrorState } from "@/components/ui/error-state";
+import { TimeRangePicker, defaultRange, type TimeRange } from "@/components/map/TimeRangePicker";
 
 interface Campaign { id: string; name: string }
 interface Zone { id: string; name: string }
@@ -99,7 +100,12 @@ function TimesheetsTab() {
   });
 
   const [selectedRiderId, setSelectedRiderId] = useState("all");
-  const [days, setDays] = useState(7);
+  const [timeRange, setTimeRange] = useState<TimeRange>(() => {
+    // Default to "Last 7 days" so the matrix view shows a useful spread out of the box.
+    const endMs = Date.now();
+    const startMs = endMs - 7 * 24 * 3600 * 1000;
+    return { startMs, endMs, preset: "last7d", label: "Last 7 days" };
+  });
 
   const showAll = selectedRiderId === "all";
 
@@ -117,7 +123,7 @@ function TimesheetsTab() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Select value={selectedRiderId} onValueChange={setSelectedRiderId}>
               <SelectTrigger className="w-48 h-8 text-xs">
                 <SelectValue />
@@ -132,27 +138,17 @@ function TimesheetsTab() {
               </SelectContent>
             </Select>
 
-            <select
-              value={days}
-              onChange={(e) => setDays(Number(e.target.value))}
-              className="border rounded-md px-2 h-8 text-xs bg-background"
-            >
-              <option value={1}>Today</option>
-              <option value={3}>3 days</option>
-              <option value={7}>7 days</option>
-              <option value={14}>14 days</option>
-              <option value={30}>30 days</option>
-            </select>
+            <TimeRangePicker value={timeRange} onChange={setTimeRange} />
           </div>
         </CardHeader>
 
         <CardContent>
           {showAll ? (
-            <AllRidersTimesheet riders={riders} days={days} />
+            <AllRidersTimesheet riders={riders} timeRange={timeRange} />
           ) : (
             <SingleRiderTimesheet
               rider={riders.find((r) => r.id === selectedRiderId)}
-              days={days}
+              timeRange={timeRange}
             />
           )}
         </CardContent>
@@ -163,28 +159,36 @@ function TimesheetsTab() {
 
 // ── All-riders matrix view ──────────────────────────────────────────────────
 
-function AllRidersTimesheet({ riders, days }: { riders: Rider[]; days: number }) {
+function AllRidersTimesheet({ riders, timeRange }: { riders: Rider[]; timeRange: TimeRange }) {
   const ridersWithBags = riders.filter((r) => r.bag_id);
+  const startStr = new Date(timeRange.startMs).toISOString();
+  const endStr = new Date(timeRange.endMs).toISOString();
+  const qs = `startTime=${encodeURIComponent(startStr)}&endTime=${encodeURIComponent(endStr)}`;
 
   const queries = useQueries({
     queries: ridersWithBags.map((rider) => ({
-      queryKey: ["rider-sessions", rider.id, days],
-      queryFn: () => api.get<SessionsResponse>(`/riders/${rider.id}/sessions?days=${days}`),
+      queryKey: ["rider-sessions", rider.id, startStr, endStr],
+      queryFn: () => api.get<SessionsResponse>(`/riders/${rider.id}/sessions?${qs}`),
       staleTime: 5 * 60_000,
     })),
   });
 
-  // Build the date columns (most recent first)
+  // Build the date columns within the selected range (most recent first).
+  // Capped at 31 columns so a misclick doesn't render an unreadable wall.
   const dateColumns = useMemo(() => {
     const cols: string[] = [];
-    const now = new Date();
-    for (let i = 0; i < days; i++) {
-      const d = new Date(now);
-      d.setDate(now.getDate() - i);
-      cols.push(d.toISOString().slice(0, 10));
+    const start = new Date(timeRange.startMs);
+    start.setHours(0, 0, 0, 0);
+    let cursor = new Date(timeRange.endMs);
+    cursor.setHours(0, 0, 0, 0);
+    while (cursor.getTime() >= start.getTime() && cols.length < 31) {
+      cols.push(
+        `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`
+      );
+      cursor.setDate(cursor.getDate() - 1);
     }
     return cols;
-  }, [days]);
+  }, [timeRange.startMs, timeRange.endMs]);
 
   const isLoading = queries.some((q) => q.isLoading);
   const hasError = queries.some((q) => q.isError);
@@ -302,10 +306,10 @@ function AllRidersTimesheet({ riders, days }: { riders: Rider[]; days: number })
 
 function SingleRiderTimesheet({
   rider,
-  days,
+  timeRange,
 }: {
   rider: Rider | undefined;
-  days: number;
+  timeRange: TimeRange;
 }) {
   if (!rider) {
     return <p className="text-sm text-muted-foreground text-center py-6">Rider not found</p>;
@@ -323,20 +327,27 @@ function SingleRiderTimesheet({
     );
   }
 
+  const startStr = new Date(timeRange.startMs).toISOString();
+  const endStr = new Date(timeRange.endMs).toISOString();
+  const qs = `startTime=${encodeURIComponent(startStr)}&endTime=${encodeURIComponent(endStr)}`;
+
   const sessionsQ = useQuery<SessionsResponse>({
-    queryKey: ["rider-sessions", rider.id, days],
-    queryFn: () => api.get(`/riders/${rider.id}/sessions?days=${days}`),
+    queryKey: ["rider-sessions", rider.id, startStr, endStr],
+    queryFn: () => api.get(`/riders/${rider.id}/sessions?${qs}`),
     staleTime: 5 * 60_000,
   });
 
+  // Plays endpoint still uses days for now (its underlying Colorlight call only
+  // supports a single window anyway). Approximate to the closest day count.
+  const dayCount = Math.max(1, Math.ceil((timeRange.endMs - timeRange.startMs) / (24 * 3600 * 1000)));
   const playsQ = useQuery<PlayTimes>({
-    queryKey: ["bag-plays", rider.bag_id, days],
-    queryFn: () => api.get(`/bags/${rider.bag_id}/play-times?days=${days}`),
+    queryKey: ["bag-plays", rider.bag_id, dayCount],
+    queryFn: () => api.get(`/bags/${rider.bag_id}/play-times?days=${dayCount}`),
     staleTime: 5 * 60_000,
   });
 
   const downloadCsv = () => {
-    window.location.href = `/api/riders/${rider.id}/sessions/export?days=${days}`;
+    window.location.href = `/api/riders/${rider.id}/sessions/export?${qs}`;
   };
 
   return (
@@ -391,7 +402,7 @@ function SingleRiderTimesheet({
       )}
 
       {/* Ads played */}
-      <AdsSection playsQ={playsQ} days={days} />
+      <AdsSection playsQ={playsQ} days={dayCount} />
     </div>
   );
 }
