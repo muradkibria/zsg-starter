@@ -4,6 +4,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Dashboard } from "@/pages/Dashboard";
 import { Fleet } from "@/pages/Fleet";
 import { BagDetail } from "@/pages/BagDetail";
+import { RiderDetail } from "@/pages/RiderDetail";
 import { Playlists } from "@/pages/Playlists";
 import { Media } from "@/pages/Media";
 import { Campaigns } from "@/pages/Campaigns";
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/fleet" element={<Fleet />} />
             <Route path="/fleet/:bagId" element={<BagDetail />} />
+            <Route path="/riders/:riderId" element={<RiderDetail />} />
             <Route path="/media" element={<Media />} />
             <Route path="/playlists" element={<Playlists />} />
             <Route path="/campaigns" element={<Campaigns />} />

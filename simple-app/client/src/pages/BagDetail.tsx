@@ -191,8 +191,8 @@ export function BagDetail() {
       {/* ── Currently playing ── */}
       <CurrentlyPlayingCard bagId={bagId} />
 
-      {/* ── Rider profile ── */}
-      <RiderSection
+      {/* ── Rider allocation ── */}
+      <RiderAllocationCard
         bagId={bagId}
         rider={riderQ.data ?? null}
         loading={riderQ.isLoading}
@@ -200,19 +200,9 @@ export function BagDetail() {
         onChange={() => {
           qc.invalidateQueries({ queryKey: ["bag-rider", bagId] });
           qc.invalidateQueries({ queryKey: ["riders"] });
+          qc.invalidateQueries({ queryKey: ["bags"] });
         }}
       />
-
-      {/* ── Documents ── */}
-      {riderQ.data && (
-        <DocumentsSection
-          rider={riderQ.data}
-          onChange={() => {
-            qc.invalidateQueries({ queryKey: ["bag-rider", bagId] });
-            qc.invalidateQueries({ queryKey: ["riders"] });
-          }}
-        />
-      )}
 
       {/* ── Timesheet ── */}
       <TimesheetSection
@@ -416,9 +406,15 @@ function BagStatsCard({ bag, loading, error }: { bag: Bag | undefined; loading: 
   );
 }
 
-// ── Rider profile section ───────────────────────────────────────────────────
+// ── Rider allocation ─────────────────────────────────────────────────────────
 
-function RiderSection({
+interface RiderListEntry {
+  id: string;
+  name: string;
+  bag_id: string | null;
+}
+
+function RiderAllocationCard({
   bagId,
   rider,
   loading,
@@ -431,67 +427,26 @@ function RiderSection({
   error: boolean;
   onChange: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({
-    name: rider?.name ?? "",
-    phone: rider?.phone ?? "",
-    email: rider?.email ?? "",
-    address: rider?.address ?? "",
-    notes: rider?.notes ?? "",
+  const [picking, setPicking] = useState(false);
+
+  // List of all registered riders (for the assignment dropdown)
+  const ridersQ = useQuery<RiderListEntry[]>({
+    queryKey: ["riders"],
+    queryFn: () => api.get("/riders"),
   });
 
-  // Reset form when rider data changes
-  useEffect(() => {
-    if (rider) {
-      setForm({
-        name: rider.name,
-        phone: rider.phone ?? "",
-        email: rider.email ?? "",
-        address: rider.address ?? "",
-        notes: rider.notes ?? "",
-      });
-    }
-  }, [rider?.id, rider?.updated]);
-
-  const create = useMutation({
-    mutationFn: () =>
-      api.post<Rider>("/riders", {
-        ...form,
-        bag_id: bagId,
-        status: "active",
-      }),
+  const assign = useMutation({
+    mutationFn: (riderId: string) =>
+      api.put(`/bags/${bagId}/rider`, { riderId }),
     onSuccess: () => {
       onChange();
-      setEditing(false);
+      setPicking(false);
     },
   });
 
-  const update = useMutation({
-    mutationFn: () => {
-      if (!rider) throw new Error("No rider");
-      return api.put<Rider>(`/riders/${rider.id}`, {
-        name: form.name,
-        phone: form.phone || null,
-        email: form.email || null,
-        address: form.address || null,
-        notes: form.notes,
-      });
-    },
-    onSuccess: () => {
-      onChange();
-      setEditing(false);
-    },
-  });
-
-  const remove = useMutation({
-    mutationFn: () => {
-      if (!rider) throw new Error("No rider");
-      return api.delete(`/riders/${rider.id}`);
-    },
-    onSuccess: () => {
-      onChange();
-      setEditing(false);
-    },
+  const unassign = useMutation({
+    mutationFn: () => api.delete(`/bags/${bagId}/rider`),
+    onSuccess: () => onChange(),
   });
 
   if (loading) {
@@ -499,315 +454,205 @@ function RiderSection({
       <Card><CardContent className="p-4"><Skeleton className="h-20 w-full" /></CardContent></Card>
     );
   }
-
   if (error) {
-    return <ErrorState title="Couldn't load rider profile" />;
+    return <ErrorState title="Couldn't load rider info" />;
   }
 
-  // Empty state — no rider assigned to this bag
-  if (!rider && !editing) {
+  // Empty state: no rider assigned to this bag
+  if (!rider) {
     return (
       <Card>
-        <CardContent className="p-6 text-center">
-          <Truck className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
-          <p className="text-sm font-semibold mb-1">No rider assigned</p>
-          <p className="text-xs text-muted-foreground mb-4">
-            Register a rider to track contact details, ID documents and online hours for this terminal.
-          </p>
-          <Button size="sm" onClick={() => setEditing(true)}>
-            <Plus className="h-3.5 w-3.5 mr-1" />
-            Register rider
-          </Button>
+        <CardContent className="p-4">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <h3 className="text-sm font-semibold">Rider</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                No rider assigned to this terminal.
+              </p>
+            </div>
+            {!picking && (
+              <Button size="sm" onClick={() => setPicking(true)}>
+                <Plus className="h-3.5 w-3.5 mr-1" /> Assign rider
+              </Button>
+            )}
+          </div>
+
+          {picking && (
+            <RiderPicker
+              riders={ridersQ.data ?? []}
+              loading={ridersQ.isLoading}
+              currentRiderId={null}
+              onCancel={() => setPicking(false)}
+              onPick={(id) => assign.mutate(id)}
+              isPending={assign.isPending}
+            />
+          )}
         </CardContent>
       </Card>
     );
   }
 
-  // Editing OR creating — show form
-  if (editing || !rider) {
-    return (
-      <Card>
-        <CardContent className="p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">
-              {rider ? "Edit rider" : "New rider"}
-            </h3>
-            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Full name *</label>
-              <Input
-                placeholder="e.g. James Okafor"
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Phone</label>
-              <Input
-                placeholder="+44 …"
-                value={form.phone}
-                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Email</label>
-              <Input
-                type="email"
-                placeholder="rider@email.com"
-                value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Address</label>
-              <Input
-                placeholder="Street, city, postcode"
-                value={form.address}
-                onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Notes</label>
-              <textarea
-                rows={3}
-                className="w-full text-sm rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
-                placeholder="Internal notes (shift preferences, training, etc.)"
-                value={form.notes}
-                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-1">
-            <div>
-              {rider && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => {
-                    if (confirm("Delete this rider? Their documents and profile will be removed.")) {
-                      remove.mutate();
-                    }
-                  }}
-                >
-                  <Trash2 className="h-3.5 w-3.5 mr-1" />
-                  Delete rider
-                </Button>
-              )}
-            </div>
-            <Button
-              size="sm"
-              onClick={() => (rider ? update.mutate() : create.mutate())}
-              disabled={!form.name.trim() || create.isPending || update.isPending}
-            >
-              {(create.isPending || update.isPending) ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
-              ) : (
-                <Save className="h-3.5 w-3.5 mr-1" />
-              )}
-              {rider ? "Save changes" : "Create rider"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // Display mode
+  // Rider assigned: show summary + actions
   return (
     <Card>
       <CardContent className="p-4">
         <div className="flex items-start justify-between mb-3">
           <div>
-            <h3 className="text-base font-semibold">{rider.name}</h3>
-            <StatusBadge status={rider.status} />
+            <h3 className="text-sm font-semibold">Rider</h3>
+            <Link
+              to={`/riders/${rider.id}`}
+              className="text-base font-semibold text-primary hover:underline"
+            >
+              {rider.name}
+            </Link>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setEditing(true)}>Edit</Button>
+          {!picking && (
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="sm" onClick={() => setPicking(true)}>
+                Change
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => {
+                  if (confirm(`Unassign ${rider.name} from this terminal?`)) {
+                    unassign.mutate();
+                  }
+                }}
+                disabled={unassign.isPending}
+              >
+                {unassign.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Unassign"}
+              </Button>
+            </div>
+          )}
         </div>
 
-        <div className="space-y-1.5">
-          {rider.phone && (
-            <div className="flex items-center gap-2 text-sm">
-              <Phone className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span>{rider.phone}</span>
+        {!picking && (
+          <div className="space-y-1.5">
+            {rider.phone && (
+              <div className="flex items-center gap-2 text-sm">
+                <Phone className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span>{rider.phone}</span>
+              </div>
+            )}
+            {rider.email && (
+              <div className="flex items-center gap-2 text-sm">
+                <Mail className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span>{rider.email}</span>
+              </div>
+            )}
+            {rider.address && (
+              <div className="flex items-center gap-2 text-sm">
+                <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span>{rider.address}</span>
+              </div>
+            )}
+            <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
+              <FileText className="h-3 w-3" />
+              {rider.documents.length} document{rider.documents.length !== 1 ? "s" : ""}
+              <Link to={`/riders/${rider.id}`} className="text-primary hover:underline ml-1">
+                Manage on rider page →
+              </Link>
             </div>
-          )}
-          {rider.email && (
-            <div className="flex items-center gap-2 text-sm">
-              <Mail className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span>{rider.email}</span>
-            </div>
-          )}
-          {rider.address && (
-            <div className="flex items-center gap-2 text-sm">
-              <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span>{rider.address}</span>
-            </div>
-          )}
-          {rider.notes && (
-            <p className="text-sm text-muted-foreground italic mt-2 whitespace-pre-wrap">
-              {rider.notes}
-            </p>
-          )}
-        </div>
+          </div>
+        )}
+
+        {picking && (
+          <RiderPicker
+            riders={ridersQ.data ?? []}
+            loading={ridersQ.isLoading}
+            currentRiderId={rider.id}
+            onCancel={() => setPicking(false)}
+            onPick={(id) => assign.mutate(id)}
+            isPending={assign.isPending}
+          />
+        )}
       </CardContent>
     </Card>
   );
 }
 
-// ── Documents ────────────────────────────────────────────────────────────────
+function RiderPicker({
+  riders,
+  loading,
+  currentRiderId,
+  onCancel,
+  onPick,
+  isPending,
+}: {
+  riders: RiderListEntry[];
+  loading: boolean;
+  currentRiderId: string | null;
+  onCancel: () => void;
+  onPick: (id: string) => void;
+  isPending: boolean;
+}) {
+  const [selectedId, setSelectedId] = useState<string>("");
 
-function DocumentsSection({ rider, onChange }: { rider: Rider; onChange: () => void }) {
-  const [adding, setAdding] = useState(false);
-  const [docType, setDocType] = useState(DOC_TYPES[0]);
-  const [file, setFile] = useState<File | null>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  if (loading) {
+    return <Skeleton className="h-10 w-full" />;
+  }
+  if (riders.length === 0) {
+    return (
+      <div className="border border-dashed rounded-md p-4 text-center text-sm">
+        <p className="text-muted-foreground mb-2">No riders registered yet.</p>
+        <Link to="/fleet" className="text-primary text-xs hover:underline">
+          Register a rider on the Fleet → Riders tab
+        </Link>
+      </div>
+    );
+  }
 
-  const add = useMutation({
-    mutationFn: async () => {
-      if (!file) throw new Error("No file");
-      if (file.size > MAX_DOC_SIZE) {
-        throw new Error(`File too large — max ${formatBytes(MAX_DOC_SIZE)}`);
-      }
-      const data = await readFileAsDataURL(file);
-      return api.post(`/riders/${rider.id}/documents`, {
-        type: docType,
-        filename: file.name,
-        mime_type: file.type || "application/octet-stream",
-        data,
-        size_bytes: file.size,
-      });
-    },
-    onSuccess: () => {
-      onChange();
-      setAdding(false);
-      setFile(null);
-      setDocType(DOC_TYPES[0]);
-      setUploadError(null);
-    },
-    onError: (err) => setUploadError(err instanceof Error ? err.message : "Upload failed"),
-  });
-
-  const remove = useMutation({
-    mutationFn: (docId: string) =>
-      api.delete(`/riders/${rider.id}/documents/${docId}`),
-    onSuccess: () => onChange(),
-  });
+  // Sort: unassigned first, then alphabetical. Exclude the currently-assigned rider.
+  const options = riders
+    .filter((r) => r.id !== currentRiderId)
+    .sort((a, b) => {
+      const aFree = !a.bag_id;
+      const bFree = !b.bag_id;
+      if (aFree && !bFree) return -1;
+      if (!aFree && bFree) return 1;
+      return a.name.localeCompare(b.name);
+    });
 
   return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold">
-            ID Documents
-            <span className="text-xs text-muted-foreground font-normal ml-2">
-              ({rider.documents.length})
-            </span>
-          </h3>
-          {!adding && (
-            <Button size="sm" onClick={() => setAdding(true)}>
-              <Plus className="h-3.5 w-3.5 mr-1" /> Add document
-            </Button>
-          )}
-        </div>
-
-        {adding && (
-          <div className="border rounded-md p-3 mb-3 bg-muted/30 space-y-2">
-            <div className="flex gap-2">
-              <select
-                className="border rounded-md px-2 py-1.5 text-xs bg-background"
-                value={docType}
-                onChange={(e) => setDocType(e.target.value)}
-              >
-                {DOC_TYPES.map((t) => <option key={t}>{t}</option>)}
-              </select>
-              <Input
-                type="file"
-                accept=".pdf,.jpg,.jpeg,.png,.heic"
-                className="text-xs flex-1"
-                onChange={(e) => {
-                  setFile(e.target.files?.[0] ?? null);
-                  setUploadError(null);
-                }}
-              />
-            </div>
-            {uploadError && (
-              <p className="text-xs text-destructive">{uploadError}</p>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => { setAdding(false); setFile(null); setUploadError(null); }}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                disabled={!file || add.isPending}
-                onClick={() => add.mutate()}
-              >
-                {add.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
-                Upload
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {rider.documents.length === 0 && !adding ? (
-          <p className="text-xs text-muted-foreground text-center py-4">
-            No documents uploaded
+    <div className="border rounded-md p-3 bg-muted/20 space-y-2">
+      <div>
+        <label className="text-xs font-medium text-muted-foreground block mb-1">
+          {currentRiderId ? "Replace with" : "Pick a registered rider"}
+        </label>
+        <select
+          value={selectedId}
+          onChange={(e) => setSelectedId(e.target.value)}
+          className="w-full border rounded-md px-2 py-1.5 text-sm bg-background"
+          autoFocus
+        >
+          <option value="">— select rider —</option>
+          {options.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name}{r.bag_id ? ` (currently on terminal ${r.bag_id})` : " (unallocated)"}
+            </option>
+          ))}
+        </select>
+        {selectedId && options.find((r) => r.id === selectedId)?.bag_id && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2">
+            This rider will be moved from their current terminal automatically.
           </p>
-        ) : (
-          <div className="space-y-1.5">
-            {rider.documents.map((doc) => (
-              <div
-                key={doc.id}
-                className="flex items-center gap-2 border rounded-md px-3 py-2 text-sm hover:bg-accent transition-colors group"
-              >
-                <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-xs">{doc.type}</p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {doc.filename} · {formatBytes(doc.size_bytes)} · uploaded {new Date(doc.uploaded).toLocaleDateString()}
-                  </p>
-                </div>
-                <a
-                  href={doc.data}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-muted-foreground hover:text-foreground p-1"
-                  title="Open"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-                <a
-                  href={doc.data}
-                  download={doc.filename}
-                  className="text-muted-foreground hover:text-foreground p-1"
-                  title="Download"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                </a>
-                <button
-                  onClick={() => {
-                    if (confirm(`Delete "${doc.filename}"?`)) remove.mutate(doc.id);
-                  }}
-                  className="text-muted-foreground hover:text-destructive p-1 opacity-0 group-hover:opacity-100"
-                  title="Delete"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+      <div className="flex justify-between gap-2">
+        <Link to="/fleet" className="text-xs text-primary hover:underline self-center">
+          + Register new rider
+        </Link>
+        <div className="flex gap-2">
+          <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
+          <Button size="sm" onClick={() => onPick(selectedId)} disabled={!selectedId || isPending}>
+            {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+            {currentRiderId ? "Replace" : "Assign"}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

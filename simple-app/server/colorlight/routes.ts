@@ -25,7 +25,7 @@ import {
   groupSessionsByDay,
   sessionsToCsv,
 } from "./sessions.js";
-import { getRider, getRiderByBagId } from "../store/rider-store.js";
+import { getRider, getRiderByBagId, listRiders } from "../store/rider-store.js";
 
 // Device counts as "active" if its last GPS report was within the threshold.
 // 90s comfortably covers the ~30s normal Colorlight reporting interval plus a
@@ -96,18 +96,20 @@ function gpsByTerminalId(gps: ColorlightLatestGps[]): Map<number, ColorlightLate
 
 function terminalToBag(
   t: ColorlightTerminal,
-  gps: ColorlightLatestGps | undefined
+  gps: ColorlightLatestGps | undefined,
+  ridersByBagId?: Map<string, { id: string; name: string }>
 ) {
   const id = String(t.id);
   const reportMs = gps ? parseColorlightUtc(gps.serverTime, gps.reportTime) : 0;
   const gpsAge = reportMs > 0 ? Date.now() - reportMs : Infinity;
   const isActive = gpsAge < ACTIVE_GPS_THRESHOLD_MS;
+  const rider = ridersByBagId?.get(id) ?? null;
 
   return {
     id,
     name: t.title?.raw ?? t.title?.rendered ?? `Terminal ${id}`,
     colorlight_device_id: id,
-    rider_id: null,
+    rider_id: rider?.id ?? null,
     status: isActive ? "active" : "inactive",
     last_lat: gps?.latitude ?? null,
     last_lng: gps?.longitude ?? null,
@@ -115,8 +117,16 @@ function terminalToBag(
     last_heading: gps?.direct ?? null,
     last_gps_at: gps ? utcStamp(gps.serverTime, gps.reportTime) : null,
     created: t.date ?? null,
-    expand: { rider_id: null },
+    expand: { rider_id: rider },
   };
+}
+
+function buildRiderIndex(): Map<string, { id: string; name: string }> {
+  const map = new Map<string, { id: string; name: string }>();
+  for (const r of listRiders()) {
+    if (r.bag_id) map.set(r.bag_id, { id: r.id, name: r.name });
+  }
+  return map;
 }
 
 function defaultDayWindow() {
@@ -187,7 +197,8 @@ router.get("/bags", async (_req, res, next) => {
   try {
     const [terminals, gps] = await Promise.all([getTerminalsCached(), getGpsCached()]);
     const map = gpsByTerminalId(gps);
-    res.json(terminals.map((t) => terminalToBag(t, map.get(t.id))));
+    const ridersByBag = buildRiderIndex();
+    res.json(terminals.map((t) => terminalToBag(t, map.get(t.id), ridersByBag)));
   } catch (err) {
     next(err);
   }
@@ -200,7 +211,8 @@ router.get("/bags/:id", async (req, res, next) => {
       getTerminal(id),
       getLatestGpsForTerminal(id),
     ]);
-    res.json(terminalToBag(terminal, gps ?? undefined));
+    const ridersByBag = buildRiderIndex();
+    res.json(terminalToBag(terminal, gps ?? undefined, ridersByBag));
   } catch (err) {
     next(err);
   }

@@ -62,12 +62,52 @@ router.delete("/riders/:id", (req, res) => {
   res.json({ success: true });
 });
 
-// ── Bag → rider lookup ───────────────────────────────────────────────────────
+// ── Bag ↔ rider allocation ───────────────────────────────────────────────────
 
 router.get("/bags/:bagId/rider", (req, res) => {
   const rider = getRiderByBagId(req.params.bagId);
   if (!rider) { res.status(404).json({ error: "No rider assigned to this bag" }); return; }
   res.json(rider);
+});
+
+/**
+ * Assign a registered rider to a bag.
+ *   PUT /api/bags/:bagId/rider
+ *   body: { riderId: string }
+ *
+ * If the rider was on another bag, they're auto-unassigned from it.
+ * If another rider currently holds this bag, they're auto-unassigned from it.
+ */
+router.put("/bags/:bagId/rider", (req, res) => {
+  const { riderId } = req.body ?? {};
+  if (!riderId || typeof riderId !== "string") {
+    res.status(400).json({ error: "riderId is required" });
+    return;
+  }
+
+  // Verify the rider exists before mutating
+  const target = getRider(riderId);
+  if (!target) { res.status(404).json({ error: "Rider not found" }); return; }
+
+  // updateRider handles the "one bag per rider, one rider per bag" rule
+  const updated = updateRider(riderId, { bag_id: req.params.bagId });
+  if (!updated) { res.status(500).json({ error: "Allocation failed" }); return; }
+  res.json({ rider: updated, bagId: req.params.bagId });
+});
+
+/**
+ * Unassign whichever rider is currently on this bag.
+ *   DELETE /api/bags/:bagId/rider
+ */
+router.delete("/bags/:bagId/rider", (req, res) => {
+  const rider = getRiderByBagId(req.params.bagId);
+  if (!rider) {
+    // Nothing to unassign — be idempotent
+    res.json({ success: true, message: "No rider was assigned to this bag" });
+    return;
+  }
+  updateRider(rider.id, { bag_id: null });
+  res.json({ success: true, riderId: rider.id });
 });
 
 // ── Documents ────────────────────────────────────────────────────────────────
