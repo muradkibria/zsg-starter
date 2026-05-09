@@ -26,6 +26,7 @@ import {
   sessionsToCsv,
 } from "./sessions.js";
 import { getRider, getRiderByBagId, listRiders } from "../store/rider-store.js";
+import { listPlaylists } from "../store/playlist-store.js";
 
 // Device counts as "active" if its last GPS report was within the threshold.
 // 90s comfortably covers the ~30s normal Colorlight reporting interval plus a
@@ -384,6 +385,251 @@ router.get("/reports/ad-plays", async (_req, res, next) => {
 
     const total = rows.reduce((s, r) => s + r.plays, 0);
     res.json({ rows, total });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Rich ad-plays breakdown for the Reports page ─────────────────────────────
+// Returns three pre-aggregated views (By Ad, By Bag, By Playlist) so the
+// frontend can pivot without re-fetching. Single endpoint = one Colorlight
+// fan-out per request.
+//
+// Query params:
+//   startTime, endTime  ISO timestamps (defaults to last 24h via resolveWindow)
+//   bagIds=a,b,c        Comma-separated bag IDs to filter to (default: all)
+router.get("/reports/ad-plays-breakdown", async (req, res, next) => {
+  try {
+    const { startTime, endTime } = resolveWindow(req);
+    const allTerminals = await getTerminalsCached();
+
+    // Bag filter — accept comma-separated IDs OR repeated query params
+    let filterIds: Set<string> | null = null;
+    const rawBagIds = req.query.bagIds;
+    if (typeof rawBagIds === "string" && rawBagIds.trim()) {
+      filterIds = new Set(rawBagIds.split(",").map((s) => s.trim()).filter(Boolean));
+    } else if (Array.isArray(rawBagIds)) {
+      filterIds = new Set(rawBagIds.map(String));
+    }
+
+    const terminals = filterIds
+      ? allTerminals.filter((t) => filterIds!.has(String(t.id)))
+      : allTerminals;
+
+    const terminalNameById = new Map<string, string>();
+    for (const t of terminals) {
+      terminalNameById.set(String(t.id), t.title?.raw ?? `Terminal ${t.id}`);
+    }
+
+    // Fan out to Colorlight playTimes per bag (concurrency-limited)
+    const concurrency = 4;
+    type RawStat = {
+      bagId: string;
+      bagName: string;
+      mediaMd5: string;
+      mediaName: string;
+      mediaType: string;
+      plays: number;
+      durationSeconds: number;
+    };
+    const rawStats: RawStat[] = [];
+
+    for (let i = 0; i < terminals.length; i += concurrency) {
+      const batch = terminals.slice(i, i + concurrency);
+      const settled = await Promise.allSettled(
+        batch.map(async (t) => {
+          const data = await getMediaPlayTimes(t.id, startTime, endTime);
+          return { terminal: t, data };
+        })
+      );
+      for (const r of settled) {
+        if (r.status !== "fulfilled" || !r.value.data?.statistic) continue;
+        const bagId = String(r.value.terminal.id);
+        const bagName = terminalNameById.get(bagId) ?? bagId;
+        for (const s of r.value.data.statistic) {
+          rawStats.push({
+            bagId,
+            bagName,
+            mediaMd5: s.mediaMd5,
+            mediaName: s.mediaName,
+            mediaType: s.mediaType,
+            plays: s.totalPlayTimes,
+            durationSeconds: s.totalPlayDuration,
+          });
+        }
+      }
+    }
+
+    // ── Pivot 1: By Ad ────────────────────────────────────────────────────
+    const adMap = new Map<string, {
+      mediaMd5: string;
+      mediaName: string;
+      mediaType: string;
+      totalPlays: number;
+      totalDurationSeconds: number;
+      perBag: { bagId: string; bagName: string; plays: number; durationSeconds: number }[];
+    }>();
+    for (const s of rawStats) {
+      let entry = adMap.get(s.mediaMd5);
+      if (!entry) {
+        entry = {
+          mediaMd5: s.mediaMd5,
+          mediaName: s.mediaName,
+          mediaType: s.mediaType,
+          totalPlays: 0,
+          totalDurationSeconds: 0,
+          perBag: [],
+        };
+        adMap.set(s.mediaMd5, entry);
+      }
+      entry.totalPlays += s.plays;
+      entry.totalDurationSeconds += s.durationSeconds;
+      entry.perBag.push({
+        bagId: s.bagId,
+        bagName: s.bagName,
+        plays: s.plays,
+        durationSeconds: s.durationSeconds,
+      });
+    }
+    const byAd = Array.from(adMap.values()).sort((a, b) => b.totalPlays - a.totalPlays);
+
+    // ── Pivot 2: By Bag ───────────────────────────────────────────────────
+    const bagMap = new Map<string, {
+      bagId: string;
+      bagName: string;
+      totalPlays: number;
+      totalDurationSeconds: number;
+      perAd: { mediaMd5: string; mediaName: string; mediaType: string; plays: number; durationSeconds: number }[];
+    }>();
+    for (const s of rawStats) {
+      let entry = bagMap.get(s.bagId);
+      if (!entry) {
+        entry = {
+          bagId: s.bagId,
+          bagName: s.bagName,
+          totalPlays: 0,
+          totalDurationSeconds: 0,
+          perAd: [],
+        };
+        bagMap.set(s.bagId, entry);
+      }
+      entry.totalPlays += s.plays;
+      entry.totalDurationSeconds += s.durationSeconds;
+      entry.perAd.push({
+        mediaMd5: s.mediaMd5,
+        mediaName: s.mediaName,
+        mediaType: s.mediaType,
+        plays: s.plays,
+        durationSeconds: s.durationSeconds,
+      });
+    }
+    // Ensure every filtered bag appears even if it had zero plays
+    terminalNameById.forEach((bagName, bagId) => {
+      if (!bagMap.has(bagId)) {
+        bagMap.set(bagId, { bagId, bagName, totalPlays: 0, totalDurationSeconds: 0, perAd: [] });
+      }
+    });
+    const byBag = Array.from(bagMap.values()).sort((a, b) => b.totalPlays - a.totalPlays);
+
+    // ── Pivot 3: By Playlist ──────────────────────────────────────────────
+    // Match Colorlight's mediaMd5 (a slug like "F_<HASH>_<size>") to our
+    // playlist items, which reference media by Colorlight numeric id. The
+    // bridge is the Media library's `name` slug.
+    const mediaList = await listMedia().catch(() => []);
+    const numericIdToSlug = new Map<string, string>(); // "6421932" → "F_xxx_52721"
+    for (const m of mediaList) {
+      if (m.id != null && (m as any).name) numericIdToSlug.set(String(m.id), String((m as any).name));
+    }
+
+    const playlists = listPlaylists();
+    const byPlaylist: {
+      playlistId: string;
+      playlistName: string;
+      bagIds: string[];
+      itemCount: number;
+      totalPlays: number;
+      totalDurationSeconds: number;
+      perAd: { mediaMd5: string; mediaName: string; mediaType: string; plays: number; durationSeconds: number }[];
+    }[] = [];
+
+    const matchedSlugs = new Set<string>();
+
+    for (const pl of playlists) {
+      // Bags this playlist is on (intersect with our filter)
+      const plBagIds = pl.deployed_to.map((d) => d.bag_id).filter((b) => terminalNameById.has(b));
+      if (plBagIds.length === 0 && filterIds) continue; // skip playlists not relevant to current filter
+
+      // Slugs this playlist's items represent
+      const slugs = pl.items
+        .map((i) => numericIdToSlug.get(i.media_id))
+        .filter((s): s is string => !!s);
+
+      let totalPlays = 0;
+      let totalDuration = 0;
+      const perAd: typeof byPlaylist[number]["perAd"] = [];
+      for (const slug of slugs) {
+        const ad = adMap.get(slug);
+        if (!ad) continue;
+        // Only count plays from bags this playlist is deployed to
+        const relevant = ad.perBag.filter((b) => plBagIds.includes(b.bagId));
+        const plays = relevant.reduce((s, b) => s + b.plays, 0);
+        const dur = relevant.reduce((s, b) => s + b.durationSeconds, 0);
+        if (plays === 0) continue;
+        totalPlays += plays;
+        totalDuration += dur;
+        perAd.push({
+          mediaMd5: slug,
+          mediaName: ad.mediaName,
+          mediaType: ad.mediaType,
+          plays,
+          durationSeconds: dur,
+        });
+        matchedSlugs.add(slug);
+      }
+
+      byPlaylist.push({
+        playlistId: pl.id,
+        playlistName: pl.name,
+        bagIds: plBagIds,
+        itemCount: pl.items.length,
+        totalPlays,
+        totalDurationSeconds: totalDuration,
+        perAd: perAd.sort((a, b) => b.plays - a.plays),
+      });
+    }
+    byPlaylist.sort((a, b) => b.totalPlays - a.totalPlays);
+
+    // Anything that didn't match a CMS-managed playlist (legacy / external programs)
+    const unmatchedAds = byAd
+      .filter((a) => !matchedSlugs.has(a.mediaMd5))
+      .map((a) => ({
+        mediaMd5: a.mediaMd5,
+        mediaName: a.mediaName,
+        mediaType: a.mediaType,
+        plays: a.totalPlays,
+        durationSeconds: a.totalDurationSeconds,
+      }));
+
+    // ── Totals ────────────────────────────────────────────────────────────
+    const totalPlays = byAd.reduce((s, a) => s + a.totalPlays, 0);
+    const totalDurationSeconds = byAd.reduce((s, a) => s + a.totalDurationSeconds, 0);
+
+    res.json({
+      startTime: new Date(startTime + (startTime.endsWith("Z") ? "" : "Z")).toISOString(),
+      endTime: new Date(endTime + (endTime.endsWith("Z") ? "" : "Z")).toISOString(),
+      bagsCovered: terminals.length,
+      bagIds: terminals.map((t) => String(t.id)),
+      totalPlays,
+      totalDurationSeconds,
+      adCount: byAd.length,
+      byAd,
+      byBag,
+      byPlaylist,
+      unmatched: {
+        totalPlays: unmatchedAds.reduce((s, a) => s + a.plays, 0),
+        ads: unmatchedAds,
+      },
+    });
   } catch (err) {
     next(err);
   }

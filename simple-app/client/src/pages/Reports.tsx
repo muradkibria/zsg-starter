@@ -7,9 +7,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, Clock, Film, Image as ImageIcon } from "lucide-react";
+import { Download, Clock, Film, Image as ImageIcon, BarChart2, ListMusic, Truck, AlertCircle } from "lucide-react";
 import { ErrorState } from "@/components/ui/error-state";
 import { TimeRangePicker, defaultRange, type TimeRange } from "@/components/map/TimeRangePicker";
+import { BagFilter, applyBagFilter } from "@/components/map/BagFilter";
+import { useLiveBags } from "@/hooks/use-live-bags";
 
 interface Campaign { id: string; name: string }
 interface Zone { id: string; name: string }
@@ -410,7 +412,7 @@ function SingleRiderTimesheet({
 function SummaryStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="border rounded-md p-3 text-center">
-      <p className="text-2xl font-bold">{value}</p>
+      <p className="text-2xl font-bold tabular-nums">{value}</p>
       <p className="text-xs text-muted-foreground">{label}</p>
     </div>
   );
@@ -516,6 +518,375 @@ function AdsSection({ playsQ, days }: { playsQ: ReturnType<typeof useQuery<PlayT
   );
 }
 
+// ── Ad Plays tab ─────────────────────────────────────────────────────────────
+
+interface AdPlaysBreakdown {
+  startTime: string;
+  endTime: string;
+  bagsCovered: number;
+  bagIds: string[];
+  totalPlays: number;
+  totalDurationSeconds: number;
+  adCount: number;
+  byAd: {
+    mediaMd5: string;
+    mediaName: string;
+    mediaType: string;
+    totalPlays: number;
+    totalDurationSeconds: number;
+    perBag: { bagId: string; bagName: string; plays: number; durationSeconds: number }[];
+  }[];
+  byBag: {
+    bagId: string;
+    bagName: string;
+    totalPlays: number;
+    totalDurationSeconds: number;
+    perAd: { mediaMd5: string; mediaName: string; mediaType: string; plays: number; durationSeconds: number }[];
+  }[];
+  byPlaylist: {
+    playlistId: string;
+    playlistName: string;
+    bagIds: string[];
+    itemCount: number;
+    totalPlays: number;
+    totalDurationSeconds: number;
+    perAd: { mediaMd5: string; mediaName: string; mediaType: string; plays: number; durationSeconds: number }[];
+  }[];
+  unmatched: {
+    totalPlays: number;
+    ads: { mediaMd5: string; mediaName: string; mediaType: string; plays: number; durationSeconds: number }[];
+  };
+}
+
+type AdPlaysView = "byAd" | "byBag" | "byPlaylist";
+
+function formatHm(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function AdIcon({ type, className = "h-3 w-3" }: { type: string; className?: string }) {
+  return type?.toLowerCase() === "video"
+    ? <Film className={`${className} text-blue-500 shrink-0`} />
+    : <ImageIcon className={`${className} text-purple-500 shrink-0`} />;
+}
+
+function AdPlaysTab() {
+  // Default to "Today"
+  const [timeRange, setTimeRange] = useState<TimeRange>(() => defaultRange());
+  const [view, setView] = useState<AdPlaysView>("byAd");
+  const [selectedBags, setSelectedBags] = useState<Set<string>>(new Set());
+
+  // Load bag list (for filter dropdown)
+  const { bags } = useLiveBags();
+
+  // Resolve bag filter into a comma-separated query param
+  const filteredBags = applyBagFilter(bags, selectedBags);
+  const isFiltered = selectedBags.size > 0 && filteredBags.length < bags.length;
+  const bagIdsParam = isFiltered ? filteredBags.map((b) => b.id).join(",") : "";
+
+  const startStr = new Date(timeRange.startMs).toISOString();
+  const endStr = new Date(timeRange.endMs).toISOString();
+
+  const breakdownQ = useQuery<AdPlaysBreakdown>({
+    queryKey: ["ad-plays-breakdown", startStr, endStr, bagIdsParam],
+    queryFn: () => {
+      const qs = new URLSearchParams({ startTime: startStr, endTime: endStr });
+      if (bagIdsParam) qs.set("bagIds", bagIdsParam);
+      return api.get(`/reports/ad-plays-breakdown?${qs.toString()}`);
+    },
+    staleTime: 60_000,
+  });
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-3 flex-wrap pb-3">
+          <div>
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <BarChart2 className="h-4 w-4 text-muted-foreground" />
+              Ad Plays
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              How many times each ad has played, sourced directly from Colorlight's playback stats.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <TimeRangePicker value={timeRange} onChange={setTimeRange} />
+            <BagFilter bags={bags} selected={selectedBags} onChange={setSelectedBags} />
+            <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+              {[
+                { value: "byAd" as const, label: "By Ad", icon: BarChart2 },
+                { value: "byBag" as const, label: "By Bag", icon: Truck },
+                { value: "byPlaylist" as const, label: "By Playlist", icon: ListMusic },
+              ].map(({ value, label, icon: Icon }) => (
+                <button
+                  key={value}
+                  onClick={() => setView(value)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                    view === value
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Icon className="h-3 w-3" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardHeader>
+
+        <CardContent>
+          {breakdownQ.isError ? (
+            <ErrorState
+              title="Couldn't load ad-play data"
+              error={breakdownQ.error}
+              onRetry={() => breakdownQ.refetch()}
+            />
+          ) : breakdownQ.isLoading || !breakdownQ.data ? (
+            <div className="space-y-2">
+              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+            </div>
+          ) : breakdownQ.data.totalPlays === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No ad plays recorded in this period
+              {isFiltered ? " for the selected bags" : ""}.
+            </p>
+          ) : (
+            <>
+              <SummaryRow data={breakdownQ.data} />
+              <div className="mt-4">
+                {view === "byAd" && <ByAdView data={breakdownQ.data} />}
+                {view === "byBag" && <ByBagView data={breakdownQ.data} />}
+                {view === "byPlaylist" && <ByPlaylistView data={breakdownQ.data} />}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function SummaryRow({ data }: { data: AdPlaysBreakdown }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+      <SummaryStat label="Total plays" value={data.totalPlays.toLocaleString()} />
+      <SummaryStat label="Total airtime" value={formatHm(data.totalDurationSeconds)} />
+      <SummaryStat label="Distinct ads" value={String(data.adCount)} />
+      <SummaryStat label="Bags covered" value={String(data.bagsCovered)} />
+    </div>
+  );
+}
+
+// (SummaryStat is shared with the timesheet's SingleRiderTimesheet — defined further up)
+
+// ── By Ad view ───────────────────────────────────────────────────────────────
+
+function ByAdView({ data }: { data: AdPlaysBreakdown }) {
+  const max = Math.max(...data.byAd.map((a) => a.totalPlays), 1);
+  return (
+    <div className="space-y-1.5">
+      {data.byAd.map((ad) => (
+        <details key={ad.mediaMd5} className="border rounded-md overflow-hidden group">
+          <summary className="px-3 py-2 cursor-pointer hover:bg-accent/40 list-none flex items-center gap-3 text-sm">
+            <AdIcon type={ad.mediaType} className="h-3.5 w-3.5" />
+            <span className="flex-1 truncate font-medium" title={ad.mediaName}>{ad.mediaName}</span>
+            <div className="hidden sm:block flex-1 max-w-[180px] h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-primary/70 rounded-full" style={{ width: `${(ad.totalPlays / max) * 100}%` }} />
+            </div>
+            <span className="text-xs font-medium tabular-nums w-16 text-right">{ad.totalPlays.toLocaleString()} plays</span>
+            <span className="text-xs text-muted-foreground tabular-nums w-12 text-right">{formatHm(ad.totalDurationSeconds)}</span>
+            <span className="text-xs text-muted-foreground hidden md:inline">{ad.perBag.length} bag{ad.perBag.length !== 1 ? "s" : ""}</span>
+          </summary>
+          <div className="border-t bg-muted/20 px-3 py-2">
+            <p className="text-xs text-muted-foreground mb-2 uppercase tracking-wide">Per-bag breakdown</p>
+            <table className="w-full text-xs">
+              <tbody>
+                {ad.perBag
+                  .slice()
+                  .sort((a, b) => b.plays - a.plays)
+                  .map((b) => (
+                    <tr key={b.bagId} className="border-t first:border-t-0">
+                      <td className="px-2 py-1 font-medium">{b.bagName}</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{b.plays.toLocaleString()} plays</td>
+                      <td className="px-2 py-1 text-right text-muted-foreground tabular-nums w-20">{formatHm(b.durationSeconds)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+// ── By Bag view ──────────────────────────────────────────────────────────────
+
+function ByBagView({ data }: { data: AdPlaysBreakdown }) {
+  const max = Math.max(...data.byBag.map((b) => b.totalPlays), 1);
+  return (
+    <div className="space-y-1.5">
+      {data.byBag.map((bag) => (
+        <details key={bag.bagId} className="border rounded-md overflow-hidden">
+          <summary className="px-3 py-2 cursor-pointer hover:bg-accent/40 list-none flex items-center gap-3 text-sm">
+            <Truck className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <Link
+              to={`/fleet/${bag.bagId}`}
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 truncate font-medium text-primary hover:underline"
+            >
+              {bag.bagName}
+            </Link>
+            <div className="hidden sm:block flex-1 max-w-[180px] h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-primary/70 rounded-full" style={{ width: `${(bag.totalPlays / max) * 100}%` }} />
+            </div>
+            <span className="text-xs font-medium tabular-nums w-16 text-right">{bag.totalPlays.toLocaleString()} plays</span>
+            <span className="text-xs text-muted-foreground tabular-nums w-12 text-right">{formatHm(bag.totalDurationSeconds)}</span>
+            <span className="text-xs text-muted-foreground hidden md:inline">{bag.perAd.length} ad{bag.perAd.length !== 1 ? "s" : ""}</span>
+          </summary>
+          {bag.perAd.length === 0 ? (
+            <div className="border-t bg-muted/20 px-3 py-3 text-xs text-muted-foreground italic">
+              No ads played on this bag in the selected period.
+            </div>
+          ) : (
+            <div className="border-t bg-muted/20 px-3 py-2">
+              <p className="text-xs text-muted-foreground mb-2 uppercase tracking-wide">Ads played here</p>
+              <table className="w-full text-xs">
+                <tbody>
+                  {bag.perAd
+                    .slice()
+                    .sort((a, b) => b.plays - a.plays)
+                    .map((ad) => (
+                      <tr key={ad.mediaMd5} className="border-t first:border-t-0">
+                        <td className="px-2 py-1 w-5"><AdIcon type={ad.mediaType} /></td>
+                        <td className="px-2 py-1 truncate max-w-[200px]" title={ad.mediaName}>{ad.mediaName}</td>
+                        <td className="px-2 py-1 text-right tabular-nums">{ad.plays.toLocaleString()} plays</td>
+                        <td className="px-2 py-1 text-right text-muted-foreground tabular-nums w-20">{formatHm(ad.durationSeconds)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </details>
+      ))}
+    </div>
+  );
+}
+
+// ── By Playlist view ─────────────────────────────────────────────────────────
+
+function ByPlaylistView({ data }: { data: AdPlaysBreakdown }) {
+  const hasPlaylists = data.byPlaylist.length > 0;
+  const hasUnmatched = data.unmatched.totalPlays > 0;
+
+  if (!hasPlaylists && !hasUnmatched) {
+    return (
+      <p className="text-sm text-muted-foreground text-center py-6">
+        No playlist activity yet — once you deploy a playlist from the{" "}
+        <Link to="/playlists" className="text-primary hover:underline">Playlists page</Link>,
+        its plays will appear here grouped by playlist.
+      </p>
+    );
+  }
+
+  const max = Math.max(
+    ...data.byPlaylist.map((p) => p.totalPlays),
+    data.unmatched.totalPlays,
+    1
+  );
+
+  return (
+    <div className="space-y-2">
+      {data.byPlaylist.map((pl) => (
+        <details key={pl.playlistId} open={data.byPlaylist.length === 1} className="border rounded-md overflow-hidden">
+          <summary className="px-3 py-2 cursor-pointer hover:bg-accent/40 list-none flex items-center gap-3 text-sm">
+            <ListMusic className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <Link
+              to="/playlists"
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 truncate font-medium text-primary hover:underline"
+            >
+              {pl.playlistName}
+            </Link>
+            <div className="hidden sm:block flex-1 max-w-[180px] h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-primary/70 rounded-full" style={{ width: `${(pl.totalPlays / max) * 100}%` }} />
+            </div>
+            <span className="text-xs font-medium tabular-nums w-16 text-right">{pl.totalPlays.toLocaleString()} plays</span>
+            <span className="text-xs text-muted-foreground tabular-nums w-12 text-right">{formatHm(pl.totalDurationSeconds)}</span>
+            <span className="text-xs text-muted-foreground hidden md:inline">{pl.bagIds.length} bag{pl.bagIds.length !== 1 ? "s" : ""}</span>
+          </summary>
+          <div className="border-t bg-muted/20 px-3 py-2 space-y-2">
+            <p className="text-xs text-muted-foreground">
+              {pl.itemCount} item{pl.itemCount !== 1 ? "s" : ""} in playlist · deployed to bags:{" "}
+              {pl.bagIds.length > 0
+                ? pl.bagIds.map((id) => {
+                    const bag = data.byBag.find((b) => b.bagId === id);
+                    return bag?.bagName ?? id;
+                  }).join(", ")
+                : "—"}
+            </p>
+            <table className="w-full text-xs">
+              <tbody>
+                {pl.perAd.map((ad) => (
+                  <tr key={ad.mediaMd5} className="border-t first:border-t-0">
+                    <td className="px-2 py-1 w-5"><AdIcon type={ad.mediaType} /></td>
+                    <td className="px-2 py-1 truncate max-w-[260px]" title={ad.mediaName}>{ad.mediaName}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{ad.plays.toLocaleString()} plays</td>
+                    <td className="px-2 py-1 text-right text-muted-foreground tabular-nums w-20">{formatHm(ad.durationSeconds)}</td>
+                  </tr>
+                ))}
+                {pl.perAd.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-2 py-2 text-xs text-muted-foreground italic">
+                      No plays for this playlist's items in the selected window.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      ))}
+
+      {hasUnmatched && (
+        <details className="border rounded-md overflow-hidden border-amber-200">
+          <summary className="px-3 py-2 cursor-pointer hover:bg-amber-50 list-none flex items-center gap-3 text-sm">
+            <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+            <span className="flex-1 truncate font-medium">Other / legacy programs</span>
+            <span className="text-xs font-medium tabular-nums w-16 text-right">{data.unmatched.totalPlays.toLocaleString()} plays</span>
+            <span className="text-xs text-muted-foreground hidden md:inline">{data.unmatched.ads.length} ad{data.unmatched.ads.length !== 1 ? "s" : ""}</span>
+          </summary>
+          <div className="border-t bg-amber-50/40 px-3 py-2 space-y-2">
+            <p className="text-xs text-muted-foreground">
+              These ads played but aren't part of any CMS-managed playlist — they're from programs deployed
+              directly in Colorlight (legacy bags) or playlists that have since been edited.
+            </p>
+            <table className="w-full text-xs">
+              <tbody>
+                {data.unmatched.ads.map((ad) => (
+                  <tr key={ad.mediaMd5} className="border-t first:border-t-0">
+                    <td className="px-2 py-1 w-5"><AdIcon type={ad.mediaType} /></td>
+                    <td className="px-2 py-1 truncate max-w-[260px]" title={ad.mediaName}>{ad.mediaName}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{ad.plays.toLocaleString()} plays</td>
+                    <td className="px-2 py-1 text-right text-muted-foreground tabular-nums w-20">{formatHm(ad.durationSeconds)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ───────────────────────────────────────────────────────────────
 
 export function Reports() {
@@ -553,12 +924,17 @@ export function Reports() {
     <Tabs defaultValue="timesheet">
       <TabsList className="mb-4">
         <TabsTrigger value="timesheet">Timesheets</TabsTrigger>
+        <TabsTrigger value="adplays">Ad Plays</TabsTrigger>
         <TabsTrigger value="campaign">Campaign</TabsTrigger>
         <TabsTrigger value="zone">Zone</TabsTrigger>
       </TabsList>
 
       <TabsContent value="timesheet">
         <TimesheetsTab />
+      </TabsContent>
+
+      <TabsContent value="adplays">
+        <AdPlaysTab />
       </TabsContent>
 
       <TabsContent value="campaign">
