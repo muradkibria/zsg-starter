@@ -129,6 +129,30 @@ function defaultDayWindow() {
   return { startTime: fmt(start), endTime: fmt(end) };
 }
 
+const MAX_WINDOW_MS = 31 * 24 * 3600 * 1000; // safety cap on history queries
+
+/**
+ * Resolve a time window from query params with sensible defaults and bounds.
+ * Accepts ISO 8601 timestamps. If absent or invalid, falls back to the last
+ * 24 hours. Caps the window to 31 days so a misclick can't ask Colorlight
+ * for a year of GPS data at once.
+ */
+function resolveWindow(req: { query: Record<string, any> }): { startTime: string; endTime: string } {
+  const fmt = (d: Date) => d.toISOString().slice(0, 19);
+  const now = new Date();
+
+  let endMs = Date.parse(String(req.query?.endTime ?? ""));
+  if (!Number.isFinite(endMs)) endMs = now.getTime();
+
+  let startMs = Date.parse(String(req.query?.startTime ?? ""));
+  if (!Number.isFinite(startMs)) startMs = endMs - 24 * 3600 * 1000;
+
+  if (startMs > endMs) [startMs, endMs] = [endMs, startMs];
+  if (endMs - startMs > MAX_WINDOW_MS) startMs = endMs - MAX_WINDOW_MS;
+
+  return { startTime: fmt(new Date(startMs)), endTime: fmt(new Date(endMs)) };
+}
+
 // ── Router ───────────────────────────────────────────────────────────────────
 
 const router = Router();
@@ -185,7 +209,7 @@ router.get("/bags/:id", async (req, res, next) => {
 // GPS history (used by route map mode)
 router.get("/bags/:id/route", async (req, res, next) => {
   try {
-    const { startTime, endTime } = defaultDayWindow();
+    const { startTime, endTime } = resolveWindow(req);
     const track = await getTrack(req.params.id, startTime, endTime);
     res.json(
       (track.data ?? []).map((p) => ({
@@ -202,7 +226,7 @@ router.get("/bags/:id/route", async (req, res, next) => {
 // Same as route — frontend asks for /gps for the per-bag history page
 router.get("/bags/:id/gps", async (req, res, next) => {
   try {
-    const { startTime, endTime } = defaultDayWindow();
+    const { startTime, endTime } = resolveWindow(req);
     const track = await getTrack(req.params.id, startTime, endTime);
     res.json(
       (track.data ?? []).map((p, i) => ({
@@ -254,11 +278,11 @@ router.get("/fleet/live", async (_req, res, next) => {
   }
 });
 
-router.get("/fleet/heatmap", async (_req, res, next) => {
+router.get("/fleet/heatmap", async (req, res, next) => {
   try {
     const terminals = await getTerminalsCached();
     const groupId = terminals[0]?.terminalgroup?.[0]?.id ?? 0;
-    const { startTime, endTime } = defaultDayWindow();
+    const { startTime, endTime } = resolveWindow(req);
     const heat = await getHeatMap(groupId, startTime, endTime);
     res.json(
       (heat.data ?? []).flatMap((p) => {

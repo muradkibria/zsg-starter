@@ -7,6 +7,12 @@ import { api } from "@/lib/api";
 import type { BagLiveState } from "@/hooks/use-live-bags";
 import { ZoneLayer } from "./ZoneLayer";
 import { applyBagFilter } from "./BagFilter";
+import type { TimeRange } from "./TimeRangePicker";
+
+function isoNoTz(ms: number): string {
+  // ISO without 'Z' — Colorlight wants seconds-precision UTC strings
+  return new Date(ms).toISOString().slice(0, 19);
+}
 
 // ── Custom markers ───────────────────────────────────────────────────────────
 
@@ -112,29 +118,29 @@ function LocateMe() {
   );
 }
 
-// ── Status legend (top-left) ─────────────────────────────────────────────────
+// ── Status legend (bottom-left, away from zoom controls) ─────────────────────
 
 function Legend({ activeCount, offlineCount }: { activeCount: number; offlineCount: number }) {
   return (
     <div
-      className="leaflet-top leaflet-left"
-      style={{ marginTop: 10, marginLeft: 10, pointerEvents: "auto" }}
+      className="leaflet-bottom leaflet-left"
+      style={{ marginBottom: 22, marginLeft: 10, pointerEvents: "auto" }}
     >
       <div
         className="leaflet-control"
         style={{
           background: "white",
-          padding: "8px 12px",
+          padding: "6px 10px",
           borderRadius: 6,
           boxShadow: "0 1px 4px rgba(0,0,0,0.18)",
-          fontSize: 12,
+          fontSize: 11,
           fontFamily: "system-ui, sans-serif",
-          minWidth: 130,
+          minWidth: 110,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
           <span style={{
-            display: "inline-block", width: 10, height: 10,
+            display: "inline-block", width: 9, height: 9,
             borderRadius: "50%", background: ACTIVE_COLOR, border: "1.5px solid white",
             boxShadow: "0 0 0 1px " + ACTIVE_COLOR,
           }} />
@@ -142,7 +148,7 @@ function Legend({ activeCount, offlineCount }: { activeCount: number; offlineCou
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{
-            display: "inline-block", width: 10, height: 10,
+            display: "inline-block", width: 9, height: 9,
             borderRadius: "50%", background: OFFLINE_COLOR, border: "1.5px solid white",
             opacity: 0.85,
           }} />
@@ -188,7 +194,7 @@ function BagMarker({ bag }: { bag: BagLiveState }) {
 
 // ── Route layer ──────────────────────────────────────────────────────────────
 
-function RouteLayer({ bags }: { bags: BagLiveState[] }) {
+function RouteLayer({ bags, timeRange }: { bags: BagLiveState[]; timeRange: TimeRange }) {
   // Show routes for ALL bags with a known position (active or offline) — useful
   // for seeing where someone went today even if they're now offline.
   const eligible = bags.filter((b) => b.gps);
@@ -196,16 +202,19 @@ function RouteLayer({ bags }: { bags: BagLiveState[] }) {
   return (
     <>
       {eligible.map((bag, idx) => (
-        <BagRoute key={bag.id} bag={bag} color={ROUTE_COLORS[idx % ROUTE_COLORS.length]} />
+        <BagRoute key={bag.id} bag={bag} color={ROUTE_COLORS[idx % ROUTE_COLORS.length]} timeRange={timeRange} />
       ))}
     </>
   );
 }
 
-function BagRoute({ bag, color }: { bag: BagLiveState; color: string }) {
+function BagRoute({ bag, color, timeRange }: { bag: BagLiveState; color: string; timeRange: TimeRange }) {
+  const startStr = isoNoTz(timeRange.startMs);
+  const endStr = isoNoTz(timeRange.endMs);
   const { data: points = [] } = useQuery<{ lat: number; lng: number; timestamp: string }[]>({
-    queryKey: ["bag-route", bag.id],
-    queryFn: () => api.get(`/bags/${bag.id}/route`),
+    queryKey: ["bag-route", bag.id, startStr, endStr],
+    queryFn: () =>
+      api.get(`/bags/${bag.id}/route?startTime=${encodeURIComponent(startStr)}&endTime=${encodeURIComponent(endStr)}`),
     staleTime: 60_000,
   });
 
@@ -242,10 +251,13 @@ function BagRoute({ bag, color }: { bag: BagLiveState; color: string }) {
 // ── Heatmap layer ────────────────────────────────────────────────────────────
 
 // Fleet-wide heatmap (server-aggregated cell density)
-function FleetHeatmap() {
+function FleetHeatmap({ timeRange }: { timeRange: TimeRange }) {
+  const startStr = isoNoTz(timeRange.startMs);
+  const endStr = isoNoTz(timeRange.endMs);
   const { data: points = [] } = useQuery<{ lat: number; lng: number }[]>({
-    queryKey: ["fleet-heatmap"],
-    queryFn: () => api.get("/fleet/heatmap"),
+    queryKey: ["fleet-heatmap", startStr, endStr],
+    queryFn: () =>
+      api.get(`/fleet/heatmap?startTime=${encodeURIComponent(startStr)}&endTime=${encodeURIComponent(endStr)}`),
     staleTime: 120_000,
   });
 
@@ -266,11 +278,16 @@ function FleetHeatmap() {
 }
 
 // Per-bag heatmap built from each selected bag's track (used when filtered)
-function FilteredHeatmap({ bags }: { bags: BagLiveState[] }) {
+function FilteredHeatmap({ bags, timeRange }: { bags: BagLiveState[]; timeRange: TimeRange }) {
+  const startStr = isoNoTz(timeRange.startMs);
+  const endStr = isoNoTz(timeRange.endMs);
   const queries = useQueries({
     queries: bags.map((bag) => ({
-      queryKey: ["bag-route", bag.id],
-      queryFn: () => api.get<{ lat: number; lng: number; timestamp: string }[]>(`/bags/${bag.id}/route`),
+      queryKey: ["bag-route", bag.id, startStr, endStr],
+      queryFn: () =>
+        api.get<{ lat: number; lng: number; timestamp: string }[]>(
+          `/bags/${bag.id}/route?startTime=${encodeURIComponent(startStr)}&endTime=${encodeURIComponent(endStr)}`
+        ),
       staleTime: 60_000,
     })),
   });
@@ -306,9 +323,14 @@ interface LiveMapProps {
    * - otherwise      → only those IDs
    */
   selectedBagIds?: Set<string>;
+  /**
+   * Time window for Route and Heatmap modes. Live mode ignores this.
+   * If omitted, the server's default 24h window is used.
+   */
+  timeRange?: TimeRange;
 }
 
-export function LiveMap({ bags, mode, showZones = true, selectedBagIds }: LiveMapProps) {
+export function LiveMap({ bags, mode, showZones = true, selectedBagIds, timeRange }: LiveMapProps) {
   const filterSet = selectedBagIds ?? new Set<string>();
   const visibleBags = applyBagFilter(bags, filterSet);
 
@@ -345,12 +367,12 @@ export function LiveMap({ bags, mode, showZones = true, selectedBagIds }: LiveMa
 
       {mode === "live" && visibleBags.map((bag) => <BagMarker key={bag.id} bag={bag} />)}
 
-      {mode === "route" && <RouteLayer bags={visibleBags} />}
+      {mode === "route" && timeRange && <RouteLayer bags={visibleBags} timeRange={timeRange} />}
 
-      {mode === "heatmap" && (
+      {mode === "heatmap" && timeRange && (
         isFiltered
-          ? <FilteredHeatmap bags={bagsWithGps} />
-          : <FleetHeatmap />
+          ? <FilteredHeatmap bags={bagsWithGps} timeRange={timeRange} />
+          : <FleetHeatmap timeRange={timeRange} />
       )}
     </MapContainer>
   );

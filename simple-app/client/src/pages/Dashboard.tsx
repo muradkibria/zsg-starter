@@ -5,6 +5,7 @@ import { useLiveBags } from "@/hooks/use-live-bags";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveMap, type MapMode } from "@/components/map/LiveMap";
 import { BagFilter } from "@/components/map/BagFilter";
+import { TimeRangePicker, defaultRange, type TimeRange } from "@/components/map/TimeRangePicker";
 import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Truck, Megaphone, MapPin } from "lucide-react";
@@ -21,6 +22,7 @@ export function Dashboard() {
   const { bags, isLoading: bagsLoading, isError: bagsError, error, refetch } = useLiveBags();
   const [mapMode, setMapMode] = useState<MapMode>("live");
   const [selectedBags, setSelectedBags] = useState<Set<string>>(new Set());
+  const [timeRange, setTimeRange] = useState<TimeRange>(() => defaultRange());
 
   const { data: campaigns = [] } = useQuery<Campaign[]>({
     queryKey: ["campaigns"],
@@ -58,7 +60,7 @@ export function Dashboard() {
 
       <Card>
         <CardHeader className="pb-2 flex flex-row items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
             <CardTitle className="text-sm font-medium">Fleet Map</CardTitle>
             {!bagsError && bags.length > 0 && (
               <BagFilter
@@ -67,6 +69,12 @@ export function Dashboard() {
                 onChange={setSelectedBags}
               />
             )}
+            <TimeRangePicker
+              value={timeRange}
+              onChange={setTimeRange}
+              affectsHistoryOnly
+              disabled={mapMode === "live"}
+            />
           </div>
           <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
             {MAP_MODES.map(({ value, label, desc }) => (
@@ -98,7 +106,7 @@ export function Dashboard() {
               />
             </div>
           ) : (
-            <LiveMap bags={bags} mode={mapMode} selectedBagIds={selectedBags} />
+            <LiveMap bags={bags} mode={mapMode} selectedBagIds={selectedBags} timeRange={timeRange} />
           )}
         </CardContent>
       </Card>

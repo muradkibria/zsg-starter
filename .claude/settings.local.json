@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(ls -la *.json)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(cat \"C:\\\\\\\\Users\\\\\\\\User\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users-User-OneDrive-Documents-GitHub-zsg-starter\\\\\\\\a665bff0-9af6-4f98-82d4-4668f1bf26d7\\\\\\\\tasks\\\\\\\\bojiadbh8.output\")"
     ]
   }
 }
