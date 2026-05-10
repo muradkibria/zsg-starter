@@ -27,6 +27,7 @@ import {
 } from "./sessions.js";
 import { getRider, getRiderByBagId, listRiders } from "../store/rider-store.js";
 import { listPlaylists } from "../store/playlist-store.js";
+import { listCampaigns, isCampaignActive } from "../store/campaign-store.js";
 
 // Device counts as "active" if its last GPS report was within the threshold.
 // 90s comfortably covers the ~30s normal Colorlight reporting interval plus a
@@ -653,6 +654,163 @@ router.get("/fleet/online-hours", async (_req, res, next) => {
         lastOnlineAt: e.lastOnlineTime,
       }))
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Occupancy (commercial KPI roll-up) ───────────────────────────────────────
+//
+// Aggregates the manually-entered Campaigns store against the live bag count
+// to surface "how much inventory is contractually sold vs. how much is left
+// for the sales team to sell". Active = status==='active' AND today is within
+// the campaign's start/end window.
+
+const SLOTS_PER_BAG = 6;
+
+router.get("/occupancy", async (_req, res, next) => {
+  try {
+    const terminals = await getTerminalsCached();
+    const totalBags = terminals.length;
+    const totalSlots = totalBags * SLOTS_PER_BAG;
+
+    const all = listCampaigns();
+    const today = new Date();
+    const active = all.filter((c) => isCampaignActive(c, today));
+    const inactiveCampaignCount = all.length - active.length;
+
+    const slotsSold = active.reduce((sum, c) => sum + (c.contracted_bags || 0), 0);
+    const slotsFree = Math.max(0, totalSlots - slotsSold);
+    const utilizationPct = totalSlots > 0 ? +((slotsSold / totalSlots) * 100).toFixed(1) : 0;
+
+    const todayStr = today.toISOString().slice(0, 10);
+    const activeCampaigns = active
+      .map((c) => {
+        let daysRemaining: number | null = null;
+        if (c.end_date) {
+          const end = new Date(c.end_date + "T23:59:59Z").getTime();
+          const now = today.getTime();
+          daysRemaining = Math.max(0, Math.ceil((end - now) / (24 * 3600 * 1000)));
+        }
+        return {
+          id: c.id,
+          client_name: c.client_name,
+          campaign_name: c.campaign_name,
+          contracted_bags: c.contracted_bags,
+          start_date: c.start_date,
+          end_date: c.end_date,
+          pct_of_fleet: totalBags > 0 ? +((c.contracted_bags / totalBags) * 100).toFixed(1) : 0,
+          days_remaining: daysRemaining,
+        };
+      })
+      .sort((a, b) => b.contracted_bags - a.contracted_bags);
+
+    res.json({
+      totalBags,
+      slotsPerBag: SLOTS_PER_BAG,
+      totalSlots,
+      slotsSold,
+      slotsFree,
+      utilizationPct,
+      activeCampaigns,
+      inactiveCampaignCount,
+      asOf: todayStr,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Ad Slots (operational view — derived from playlists) ─────────────────────
+//
+// For each bag: looks up the CMS-managed playlist deployed to it (if any),
+// and represents its first SLOTS_PER_BAG items as ad slots. Items whose
+// filename matches /digilite/i (case-insensitive substring) are treated as
+// "filler" — they occupy a slot but count as available inventory in the
+// totals (because they're our own house promos filling unsold space).
+
+const FILLER_PATTERN = /digilite/i;
+type SlotState = "filled" | "filler" | "empty";
+
+interface AdSlot {
+  slot: number;          // 1..SLOTS_PER_BAG
+  state: SlotState;
+  filename?: string;
+  file_type?: string;
+  media_id?: string;
+}
+
+router.get("/ad-slots", async (_req, res, next) => {
+  try {
+    const [terminals, gps] = await Promise.all([getTerminalsCached(), getGpsCached()]);
+    const gpsMap = gpsByTerminalId(gps);
+    const playlists = listPlaylists();
+
+    let totalFilled = 0;
+    let totalFiller = 0;
+    let totalEmpty = 0;
+
+    const bagsView = terminals.map((t) => {
+      const bagId = String(t.id);
+      const bagName = t.title?.raw ?? t.title?.rendered ?? `Terminal ${bagId}`;
+      const g = gpsMap.get(t.id);
+      const reportMs = g ? parseColorlightUtc(g.serverTime, g.reportTime) : 0;
+      const status = reportMs > 0 && Date.now() - reportMs < ACTIVE_GPS_THRESHOLD_MS
+        ? "active"
+        : "inactive";
+
+      const playlist = playlists.find((p) => p.deployed_to.some((d) => d.bag_id === bagId)) ?? null;
+
+      const slots: AdSlot[] = [];
+      let filled = 0;
+      let filler = 0;
+      let empty = 0;
+
+      for (let i = 0; i < SLOTS_PER_BAG; i++) {
+        const item = playlist?.items[i];
+        if (!item) {
+          slots.push({ slot: i + 1, state: "empty" });
+          empty++;
+          continue;
+        }
+        const isFiller = FILLER_PATTERN.test(item.filename ?? "");
+        slots.push({
+          slot: i + 1,
+          state: isFiller ? "filler" : "filled",
+          filename: item.filename,
+          file_type: item.file_type,
+          media_id: item.media_id,
+        });
+        if (isFiller) filler++;
+        else filled++;
+      }
+
+      totalFilled += filled;
+      totalFiller += filler;
+      totalEmpty += empty;
+
+      return {
+        bag_id: bagId,
+        bag_name: bagName,
+        status,
+        playlist: playlist ? { id: playlist.id, name: playlist.name } : null,
+        slots,
+        filledCount: filled,
+        fillerCount: filler,
+        emptyCount: empty,
+      };
+    });
+
+    res.json({
+      slotsPerBag: SLOTS_PER_BAG,
+      totals: {
+        totalSlots: terminals.length * SLOTS_PER_BAG,
+        filled: totalFilled,
+        filler: totalFiller,
+        empty: totalEmpty,
+      },
+      bags: bagsView,
+    });
   } catch (err) {
     next(err);
   }

@@ -42,17 +42,12 @@ router.get("/riders/:id/hours", (req, res) =>
   res.json({ riderId: req.params.id, totalHours: 0 })
 );
 
-// ── Campaigns ────────────────────────────────────────────────────────────────
+// ── Campaigns: handled by campaignStoreRouter (CRUD) and liveRouter (Occupancy)
+//    The deploy concept lives on Playlists now, not Campaigns.
 
-router.get("/campaigns", (_req, res) => res.json([]));
-
-router.get("/campaigns/:id", (_req, res) =>
-  res.status(404).json({ error: "Campaign not found" })
+router.post("/campaigns/:id/deploy", (_req, res) =>
+  res.status(501).json(NOT_IMPL("Campaign deploy — use Playlists → Deploy instead"))
 );
-
-router.post("/campaigns", (_req, res) => res.status(501).json(NOT_IMPL("Campaign creation")));
-router.put("/campaigns/:id", (_req, res) => res.status(501).json(NOT_IMPL("Campaign update")));
-router.post("/campaigns/:id/deploy", (_req, res) => res.status(501).json(NOT_IMPL("Campaign deploy")));
 
 // ── Schedules ────────────────────────────────────────────────────────────────
 
@@ -81,14 +76,15 @@ router.post("/brightness", (_req, res) => res.status(501).json(NOT_IMPL("Brightn
 router.put("/brightness/:id", (_req, res) => res.status(501).json(NOT_IMPL("Brightness schedule update")));
 router.delete("/brightness/:id", (_req, res) => res.status(501).json(NOT_IMPL("Brightness schedule delete")));
 
-// ── Ad slots ─────────────────────────────────────────────────────────────────
+// ── Ad slots: GET handled by liveRouter (derived from playlists). The old
+//    PUT/DELETE writes are no longer applicable — slots are derived state, not
+//    persistent assignments. Edit a playlist instead.
 
-router.get("/ad-slots", (_req, res) => res.json([]));
 router.put("/ad-slots/:bagId/:slot", (_req, res) =>
-  res.status(501).json(NOT_IMPL("Ad slot assignment"))
+  res.status(501).json(NOT_IMPL("Ad slot assignment — slots are derived from Playlists; edit the playlist instead"))
 );
 router.delete("/ad-slots/:bagId", (_req, res) =>
-  res.status(501).json(NOT_IMPL("Ad slot clear"))
+  res.status(501).json(NOT_IMPL("Ad slot clear — clear via the playlist editor instead"))
 );
 
 // ── Audit ────────────────────────────────────────────────────────────────────

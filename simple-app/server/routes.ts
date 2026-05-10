@@ -26,21 +26,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { liveRouter } = await import("./colorlight/routes.js");
   const { publishRouter } = await import("./colorlight/publish-routes.js");
   const { playlistRouter } = await import("./store/playlist-routes.js");
+  const { campaignStoreRouter } = await import("./store/campaign-routes.js");
   const { stubRouter } = await import("./colorlight/stub-router.js");
   const { riderStoreRouter } = await import("./store/rider-routes.js");
   const { startColorlightGpsPoller } = await import("./colorlight/gps-poller.js");
 
   // Order matters — first matching route wins:
-  //   1. publishRouter     — file uploads + legacy single-file deploy
-  //   2. playlistRouter    — playlist CRUD + multi-item deploy (preferred)
-  //   3. liveRouter        — Colorlight-backed reads (bags, GPS, media, plays, sessions)
-  //   4. riderStoreRouter  — JSON-backed rider profiles + documents
-  //   5. stubRouter        — empty / 501 for everything else
+  //   1. publishRouter        — file uploads + legacy single-file deploy
+  //   2. playlistRouter       — playlist CRUD + multi-item deploy (preferred)
+  //   3. campaignStoreRouter  — campaign CRUD (Campaigns sub-tab)
+  //   4. liveRouter           — Colorlight-backed reads (bags, GPS, media, plays, sessions, occupancy, ad-slots)
+  //   5. riderStoreRouter     — JSON-backed rider profiles + documents
+  //   6. stubRouter           — empty / 501 for everything else
   // Always register so the server can boot even if Colorlight is unreachable —
   // individual requests will surface upstream errors via 502 and the frontend
   // renders error states per-page.
   app.use("/api", publishRouter);
   app.use("/api", playlistRouter);
+  app.use("/api", campaignStoreRouter);
   app.use("/api", liveRouter);
   app.use("/api", riderStoreRouter);
   app.use("/api", stubRouter);

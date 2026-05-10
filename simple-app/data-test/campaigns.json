@@ -1,0 +1,26 @@
+[
+  {
+    "id": "cam_mp088z0s_y13gry",
+    "client_name": "Test",
+    "campaign_name": "Y",
+    "status": "active",
+    "start_date": null,
+    "end_date": null,
+    "contracted_bags": 3,
+    "notes": "",
+    "created": "2026-05-10T20:30:24.076Z",
+    "updated": "2026-05-10T20:30:24.076Z"
+  },
+  {
+    "id": "cam_mp088z6z_ouvjm4",
+    "client_name": "Test2",
+    "campaign_name": "Z",
+    "status": "draft",
+    "start_date": null,
+    "end_date": null,
+    "contracted_bags": 0,
+    "notes": "",
+    "created": "2026-05-10T20:30:24.299Z",
+    "updated": "2026-05-10T20:30:24.299Z"
+  }
+]

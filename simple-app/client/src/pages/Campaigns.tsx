@@ -1,605 +1,682 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Rocket, BarChart2, Layers, Film, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { ErrorState, EmptyState } from "@/components/ui/error-state";
+import {
+  Plus, Pencil, Trash2, Loader2, Megaphone, Truck, Layers, Film, Image as ImageIcon, ListMusic, Sparkles,
+} from "lucide-react";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
+
+type CampaignStatus = "draft" | "active" | "paused" | "ended";
 
 interface Campaign {
   id: string;
-  name: string;
   client_name: string;
-  status: "draft" | "active" | "paused" | "ended";
+  campaign_name: string;
+  status: CampaignStatus;
   start_date: string | null;
   end_date: string | null;
+  contracted_bags: number;
+  notes: string;
   created: string;
+  updated: string;
 }
 
-interface Bag {
-  id: string;
-  name: string;
-  colorlight_device_id: string;
-  status: string;
+interface OccupancyResponse {
+  totalBags: number;
+  slotsPerBag: number;
+  totalSlots: number;
+  slotsSold: number;
+  slotsFree: number;
+  utilizationPct: number;
+  activeCampaigns: {
+    id: string;
+    client_name: string;
+    campaign_name: string;
+    contracted_bags: number;
+    start_date: string | null;
+    end_date: string | null;
+    pct_of_fleet: number;
+    days_remaining: number | null;
+  }[];
+  inactiveCampaignCount: number;
+  asOf: string;
 }
 
-interface Media {
-  id: string;
-  campaign_id: string | null;
-  filename: string;
-  file_type: string;
-  duration_seconds: number;
-  fileUrl: string;
+interface AdSlotsResponse {
+  slotsPerBag: number;
+  totals: {
+    totalSlots: number;
+    filled: number;
+    filler: number;
+    empty: number;
+  };
+  bags: {
+    bag_id: string;
+    bag_name: string;
+    status: string;
+    playlist: { id: string; name: string } | null;
+    slots: {
+      slot: number;
+      state: "filled" | "filler" | "empty";
+      filename?: string;
+      file_type?: string;
+      media_id?: string;
+    }[];
+    filledCount: number;
+    fillerCount: number;
+    emptyCount: number;
+  }[];
 }
 
-interface AdSlot {
-  id: string;
-  bag_id: string;
-  slot_number: number;
-  media_id: string | null;
-  campaign_id: string | null;
-  media: Media | null;
-  campaign: Campaign | null;
-  bag: Bag | null;
-}
+// ── Status pill ──────────────────────────────────────────────────────────────
 
-interface PlayRow {
-  media_id: string;
-  filename: string;
-  file_type: string;
-  campaign_id: string | null;
-  campaign_name: string | null;
-  plays: number;
-  total_seconds: number;
-}
-
-const statusColors: Record<string, string> = {
+const STATUS_STYLES: Record<CampaignStatus, string> = {
+  draft: "bg-gray-100 text-gray-700 border-gray-200",
   active: "bg-green-100 text-green-800 border-green-200",
-  draft: "bg-gray-100 text-gray-600 border-gray-200",
-  paused: "bg-yellow-100 text-yellow-800 border-yellow-200",
+  paused: "bg-amber-100 text-amber-800 border-amber-200",
   ended: "bg-red-100 text-red-700 border-red-200",
 };
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status }: { status: CampaignStatus }) {
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${statusColors[status] ?? statusColors.draft}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${STATUS_STYLES[status]}`}>
       {status}
     </span>
   );
 }
 
-const SLOTS_PER_BAG = 6;
-
-// ── Deploy dialog — pick bags and assign slots ────────────────────────────────
-
-function DeployDialog({
-  campaign,
-  bags,
-  allMedia,
-  adSlots,
-  onClose,
-}: {
-  campaign: Campaign;
-  bags: Bag[];
-  allMedia: Media[];
-  adSlots: AdSlot[];
-  onClose: () => void;
-}) {
-  const qc = useQueryClient();
-  const campaignMedia = allMedia.filter((m) => m.campaign_id === campaign.id);
-
-  // bagId → slot_number → media_id
-  const [assignments, setAssignments] = useState<Record<string, Record<number, string>>>(() => {
-    const init: Record<string, Record<number, string>> = {};
-    bags.forEach((b) => {
-      init[b.id] = {};
-      adSlots.filter((s) => s.bag_id === b.id).forEach((s) => {
-        if (s.campaign_id === campaign.id && s.media_id) {
-          init[b.id][s.slot_number] = s.media_id;
-        }
-      });
-    });
-    return init;
-  });
-
-  const [selectedBags, setSelectedBags] = useState<Set<string>>(() => {
-    const pre = new Set<string>();
-    adSlots.filter((s) => s.campaign_id === campaign.id).forEach((s) => pre.add(s.bag_id));
-    return pre;
-  });
-
-  const deploy = useMutation({
-    mutationFn: async () => {
-      const promises: Promise<unknown>[] = [];
-      for (const bagId of Array.from(selectedBags)) {
-        const bag = bags.find((b) => b.id === bagId);
-        if (!bag) continue;
-        for (let slot = 1; slot <= SLOTS_PER_BAG; slot++) {
-          const mediaId = assignments[bagId]?.[slot] ?? null;
-          promises.push(
-            api.put(`/ad-slots/${bagId}/${slot}`, {
-              media_id: mediaId,
-              campaign_id: mediaId ? campaign.id : null,
-            })
-          );
-        }
-      }
-      await Promise.all(promises);
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["ad-slots"] });
-      onClose();
-    },
-  });
-
-  const toggleBag = (id: string) => {
-    setSelectedBags((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const setSlot = (bagId: string, slot: number, mediaId: string) => {
-    setAssignments((prev) => ({
-      ...prev,
-      [bagId]: { ...prev[bagId], [slot]: mediaId },
-    }));
-  };
-
-  if (campaignMedia.length === 0) {
-    return (
-      <Dialog open onOpenChange={onClose}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Deploy — {campaign.name}</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground py-4">
-            No media uploaded for this campaign yet. Upload media first via the Media page.
-          </p>
-          <DialogFooter><Button variant="outline" onClick={onClose}>Close</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-    );
-  }
-
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Deploy — {campaign.name}</DialogTitle>
-          <p className="text-xs text-muted-foreground mt-1">
-            Select terminals and assign ad slots. Each terminal runs a 1-minute loop with {SLOTS_PER_BAG} slots.
-          </p>
-        </DialogHeader>
-
-        <div className="space-y-4 py-2">
-          {bags.map((bag) => {
-            const isSelected = selectedBags.has(bag.id);
-            const bagSlots = adSlots.filter((s) => s.bag_id === bag.id);
-            const usedByOthers = bagSlots.filter((s) => s.media_id && s.campaign_id !== campaign.id).length;
-            const free = SLOTS_PER_BAG - usedByOthers;
-
-            return (
-              <div key={bag.id} className={`border rounded-lg p-3 transition-colors ${isSelected ? "border-primary bg-accent/20" : "border-border"}`}>
-                <div className="flex items-center gap-3 mb-3">
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => toggleBag(bag.id)}
-                    className="h-4 w-4 accent-primary"
-                  />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">{bag.name}</p>
-                    <p className="text-xs text-muted-foreground font-mono">{bag.colorlight_device_id}</p>
-                  </div>
-                  <span className="text-xs text-muted-foreground">{free}/{SLOTS_PER_BAG} slots free</span>
-                  <StatusBadge status={bag.status} />
-                </div>
-
-                {isSelected && (
-                  <div className="grid grid-cols-3 gap-2">
-                    {Array.from({ length: SLOTS_PER_BAG }, (_, i) => i + 1).map((slot) => {
-                      const existing = bagSlots.find((s) => s.slot_number === slot);
-                      const isOccupied = existing?.media_id && existing.campaign_id !== campaign.id;
-                      const selected = assignments[bag.id]?.[slot] ?? "";
-
-                      return (
-                        <div key={slot} className={`border rounded p-2 text-xs ${isOccupied ? "bg-muted opacity-60" : "bg-background"}`}>
-                          <p className="font-medium text-muted-foreground mb-1">Slot {slot}</p>
-                          {isOccupied ? (
-                            <p className="text-xs text-muted-foreground truncate" title={existing?.media?.filename ?? ""}>
-                              {existing?.campaign?.name ?? "Other campaign"}
-                            </p>
-                          ) : (
-                            <select
-                              className="w-full border rounded px-1 py-0.5 text-xs bg-background"
-                              value={selected}
-                              onChange={(e) => setSlot(bag.id, slot, e.target.value)}
-                            >
-                              <option value="">— empty —</option>
-                              {campaignMedia.map((m) => (
-                                <option key={m.id} value={m.id}>{m.filename}</option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => deploy.mutate()} disabled={deploy.isPending || selectedBags.size === 0}>
-            {deploy.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Rocket className="h-4 w-4 mr-1" />}
-            Deploy to {selectedBags.size} terminal{selectedBags.size !== 1 ? "s" : ""}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
+function formatDate(s: string | null) {
+  if (!s) return "—";
+  return new Date(s + "T00:00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
-// ── Ad Slots grid tab ─────────────────────────────────────────────────────────
-
-function AdSlotsTab({ bags, adSlots, campaigns, media }: { bags: Bag[]; adSlots: AdSlot[]; campaigns: Campaign[]; media: Media[] }) {
-  const totalSlots = bags.length * SLOTS_PER_BAG;
-  const filledSlots = adSlots.filter((s) => s.media_id).length;
-  const freeSlots = totalSlots - filledSlots;
-
-  return (
-    <div className="space-y-4">
-      {/* Summary bar */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="border rounded-lg p-3 text-center">
-          <p className="text-2xl font-bold">{totalSlots}</p>
-          <p className="text-xs text-muted-foreground">Total slots</p>
-        </div>
-        <div className="border rounded-lg p-3 text-center">
-          <p className="text-2xl font-bold text-green-600">{filledSlots}</p>
-          <p className="text-xs text-muted-foreground">Filled</p>
-        </div>
-        <div className="border rounded-lg p-3 text-center">
-          <p className="text-2xl font-bold text-muted-foreground">{freeSlots}</p>
-          <p className="text-xs text-muted-foreground">Available</p>
-        </div>
-      </div>
-
-      {/* Per-bag slot grids */}
-      {bags.map((bag) => {
-        const bagSlots = adSlots.filter((s) => s.bag_id === bag.id).sort((a, b) => a.slot_number - b.slot_number);
-        const filled = bagSlots.filter((s) => s.media_id).length;
-
-        return (
-          <div key={bag.id} className="border rounded-lg overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-2 bg-muted/40 border-b">
-              <div>
-                <span className="font-medium text-sm">{bag.name}</span>
-                <span className="text-xs text-muted-foreground ml-2 font-mono">{bag.colorlight_device_id}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="flex h-2 rounded-full overflow-hidden w-24 bg-muted">
-                  <div
-                    className="h-full bg-primary rounded-full transition-all"
-                    style={{ width: `${(filled / SLOTS_PER_BAG) * 100}%` }}
-                  />
-                </div>
-                <span className="text-xs text-muted-foreground">{filled}/{SLOTS_PER_BAG}</span>
-                <StatusBadge status={bag.status} />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-6 divide-x">
-              {Array.from({ length: SLOTS_PER_BAG }, (_, i) => i + 1).map((slot) => {
-                const s = bagSlots.find((x) => x.slot_number === slot);
-                const m = s?.media ?? null;
-                const c = s?.campaign ?? null;
-
-                return (
-                  <div key={slot} className={`p-3 min-h-[90px] flex flex-col gap-1 ${m ? "bg-background" : "bg-muted/20"}`}>
-                    <p className="text-xs font-semibold text-muted-foreground">Slot {slot}</p>
-                    {m ? (
-                      <>
-                        <div className="flex items-center gap-1">
-                          {m.file_type === "video"
-                            ? <Film className="h-3 w-3 text-blue-500 shrink-0" />
-                            : <ImageIcon className="h-3 w-3 text-purple-500 shrink-0" />}
-                          <p className="text-xs font-medium truncate leading-tight">{m.filename}</p>
-                        </div>
-                        {c && (
-                          <p className="text-xs text-muted-foreground truncate">{c.name}</p>
-                        )}
-                        <p className="text-xs text-muted-foreground">{m.duration_seconds}s</p>
-                      </>
-                    ) : (
-                      <p className="text-xs text-muted-foreground mt-auto">Empty</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-
-      {/* Ad play breakdown */}
-      <AdPlayBreakdown campaigns={campaigns} media={media} />
-    </div>
-  );
-}
-
-function AdPlayBreakdown({ campaigns, media }: { campaigns: Campaign[]; media: Media[] }) {
-  const { data, isLoading, isError, error, refetch } = useQuery<{ rows: PlayRow[]; total: number }>({
-    queryKey: ["ad-plays"],
-    queryFn: () => api.get("/reports/ad-plays"),
-  });
-
-  if (isLoading) return <Skeleton className="h-32 w-full" />;
-  if (isError) {
-    return (
-      <ErrorState
-        title="Couldn't load ad-play stats"
-        error={error}
-        onRetry={() => refetch()}
-        variant="card"
-      />
-    );
-  }
-  if (!data || data.rows.length === 0) return null;
-
-  const max = Math.max(...data.rows.map((r) => r.plays));
-
-  return (
-    <div className="border rounded-lg overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2 bg-muted/40 border-b">
-        <div className="flex items-center gap-2">
-          <BarChart2 className="h-4 w-4 text-muted-foreground" />
-          <span className="font-medium text-sm">Ad Play Breakdown</span>
-        </div>
-        <span className="text-xs text-muted-foreground">{data.total} total plays</span>
-      </div>
-      <div className="p-4 space-y-3">
-        {data.rows.map((row) => (
-          <div key={row.media_id} className="flex items-center gap-3">
-            <div className="w-40 shrink-0">
-              <p className="text-xs font-medium truncate">{row.filename}</p>
-              {row.campaign_name && (
-                <p className="text-xs text-muted-foreground truncate">{row.campaign_name}</p>
-              )}
-            </div>
-            <div className="flex-1 h-5 bg-muted rounded overflow-hidden">
-              <div
-                className="h-full bg-primary/70 rounded transition-all"
-                style={{ width: `${(row.plays / max) * 100}%` }}
-              />
-            </div>
-            <span className="text-xs font-medium tabular-nums w-12 text-right">{row.plays} plays</span>
-            <span className="text-xs text-muted-foreground tabular-nums w-14 text-right">
-              {Math.round(row.total_seconds / 60)}m total
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ── New Campaign dialog ───────────────────────────────────────────────────────
-
-function NewCampaignDialog({ onClose }: { onClose: () => void }) {
-  const qc = useQueryClient();
-  const [form, setForm] = useState({
-    name: "",
-    client_name: "",
-    status: "draft" as Campaign["status"],
-    start_date: "",
-    end_date: "",
-  });
-  const [adFile, setAdFile] = useState<File | null>(null);
-
-  const create = useMutation({
-    mutationFn: async () => {
-      const campaign = await api.post<Campaign>("/campaigns", form);
-      if (adFile) {
-        const fd = new FormData();
-        fd.append("file", adFile);
-        fd.append("campaign_id", campaign.id);
-        fd.append("file_type", adFile.type.startsWith("video") ? "video" : "image");
-        fd.append("duration_seconds", "15");
-        await api.upload("/media", fd);
-      }
-      return campaign;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["campaigns"] });
-      qc.invalidateQueries({ queryKey: ["media"] });
-      onClose();
-    },
-  });
-
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>New Campaign</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">Campaign name *</label>
-            <Input placeholder="e.g. Summer Sale 2025" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">Client name</label>
-            <Input placeholder="e.g. Nike UK" value={form.client_name} onChange={(e) => setForm((f) => ({ ...f, client_name: e.target.value }))} />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">Status</label>
-            <Select value={form.status} onValueChange={(v) => setForm((f) => ({ ...f, status: v as Campaign["status"] }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="draft">Draft</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="paused">Paused</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Start date</label>
-              <Input type="date" value={form.start_date} onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))} />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">End date</label>
-              <Input type="date" value={form.end_date} onChange={(e) => setForm((f) => ({ ...f, end_date: e.target.value }))} />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">Upload advert (optional)</label>
-            <Input
-              type="file"
-              accept="image/*,video/*"
-              onChange={(e) => setAdFile(e.target.files?.[0] ?? null)}
-              className="text-xs"
-            />
-            <p className="text-xs text-muted-foreground mt-1">MP4, MOV, JPG, PNG accepted</p>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => create.mutate()} disabled={create.isPending || !form.name}>
-            {create.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-            Create
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 export function Campaigns() {
-  const { data: campaigns = [], isLoading } = useQuery<Campaign[]>({
+  return (
+    <Tabs defaultValue="campaigns">
+      <TabsList className="mb-4">
+        <TabsTrigger value="campaigns">
+          <Megaphone className="h-3.5 w-3.5 mr-1.5" /> Campaigns
+        </TabsTrigger>
+        <TabsTrigger value="occupancy">
+          <Sparkles className="h-3.5 w-3.5 mr-1.5" /> Occupancy
+        </TabsTrigger>
+        <TabsTrigger value="slots">
+          <Layers className="h-3.5 w-3.5 mr-1.5" /> Ad Slots
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="campaigns"><CampaignsTab /></TabsContent>
+      <TabsContent value="occupancy"><OccupancyTab /></TabsContent>
+      <TabsContent value="slots"><AdSlotsTab /></TabsContent>
+    </Tabs>
+  );
+}
+
+// ── Sub-tab 1: Campaigns CRUD ────────────────────────────────────────────────
+
+function CampaignsTab() {
+  const qc = useQueryClient();
+  const [editorOpen, setEditorOpen] = useState<{ kind: "new" } | { kind: "edit"; campaign: Campaign } | null>(null);
+
+  const campaignsQ = useQuery<Campaign[]>({
     queryKey: ["campaigns"],
     queryFn: () => api.get("/campaigns"),
   });
-  const { data: bags = [] } = useQuery<Bag[]>({
-    queryKey: ["bags"],
-    queryFn: () => api.get("/bags"),
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.delete(`/campaigns/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["campaigns"] });
+      qc.invalidateQueries({ queryKey: ["occupancy"] });
+    },
   });
-  const { data: allMedia = [] } = useQuery<Media[]>({
-    queryKey: ["media"],
-    queryFn: () => api.get("/media"),
+
+  const campaigns = campaignsQ.data ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-xs text-muted-foreground">
+          Track contractual deals with clients. Campaign data feeds into the Occupancy tab.
+        </p>
+        <Button size="sm" onClick={() => setEditorOpen({ kind: "new" })}>
+          <Plus className="h-3.5 w-3.5 mr-1" /> New Campaign
+        </Button>
+      </div>
+
+      {campaignsQ.isError ? (
+        <ErrorState
+          title="Couldn't load campaigns"
+          error={campaignsQ.error}
+          onRetry={() => campaignsQ.refetch()}
+        />
+      ) : campaignsQ.isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+        </div>
+      ) : campaigns.length === 0 ? (
+        <EmptyState
+          title="No campaigns yet"
+          message="Add your first campaign to start tracking contracted inventory."
+          icon={<Megaphone className="h-5 w-5" />}
+          action={
+            <Button size="sm" onClick={() => setEditorOpen({ kind: "new" })}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> Add campaign
+            </Button>
+          }
+        />
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Client</TableHead>
+                <TableHead>Campaign</TableHead>
+                <TableHead className="text-right">Bags</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Date range</TableHead>
+                <TableHead className="w-20" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {campaigns.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell className="font-medium">{c.client_name}</TableCell>
+                  <TableCell>{c.campaign_name}</TableCell>
+                  <TableCell className="text-right tabular-nums">{c.contracted_bags}</TableCell>
+                  <TableCell><StatusBadge status={c.status} /></TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {formatDate(c.start_date)} – {formatDate(c.end_date)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={() => setEditorOpen({ kind: "edit", campaign: c })}
+                        className="text-muted-foreground hover:text-foreground p-1.5"
+                        title="Edit"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Delete campaign "${c.campaign_name}"?`)) {
+                            remove.mutate(c.id);
+                          }
+                        }}
+                        disabled={remove.isPending}
+                        className="text-muted-foreground hover:text-destructive p-1.5"
+                        title="Delete"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      {editorOpen && (
+        <CampaignEditor
+          mode={editorOpen}
+          onClose={() => setEditorOpen(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function CampaignEditor({
+  mode,
+  onClose,
+}: {
+  mode: { kind: "new" } | { kind: "edit"; campaign: Campaign };
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const isEdit = mode.kind === "edit";
+  const initial = isEdit ? mode.campaign : null;
+
+  const [form, setForm] = useState({
+    client_name: initial?.client_name ?? "",
+    campaign_name: initial?.campaign_name ?? "",
+    status: initial?.status ?? ("draft" as CampaignStatus),
+    start_date: initial?.start_date ?? "",
+    end_date: initial?.end_date ?? "",
+    contracted_bags: initial?.contracted_bags ?? 0,
+    notes: initial?.notes ?? "",
   });
-  const { data: adSlots = [] } = useQuery<AdSlot[]>({
+
+  const save = useMutation({
+    mutationFn: () => {
+      const payload = {
+        client_name: form.client_name.trim(),
+        campaign_name: form.campaign_name.trim(),
+        status: form.status,
+        start_date: form.start_date || null,
+        end_date: form.end_date || null,
+        contracted_bags: Number(form.contracted_bags),
+        notes: form.notes,
+      };
+      return isEdit
+        ? api.put<Campaign>(`/campaigns/${initial!.id}`, payload)
+        : api.post<Campaign>("/campaigns", payload);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["campaigns"] });
+      qc.invalidateQueries({ queryKey: ["occupancy"] });
+      onClose();
+    },
+  });
+
+  const canSave = form.client_name.trim() && form.campaign_name.trim();
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{isEdit ? `Edit: ${initial!.campaign_name}` : "New Campaign"}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3 py-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Client *</label>
+              <Input
+                placeholder="e.g. Burger King UK"
+                value={form.client_name}
+                onChange={(e) => setForm((f) => ({ ...f, client_name: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Campaign name *</label>
+              <Input
+                placeholder="e.g. Spring Sale 2026"
+                value={form.campaign_name}
+                onChange={(e) => setForm((f) => ({ ...f, campaign_name: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Status</label>
+              <Select value={form.status} onValueChange={(v) => setForm((f) => ({ ...f, status: v as CampaignStatus }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="draft">Draft</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="paused">Paused</SelectItem>
+                  <SelectItem value="ended">Ended</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Bags contracted</label>
+              <Input
+                type="number"
+                min={0}
+                value={form.contracted_bags}
+                onChange={(e) => setForm((f) => ({ ...f, contracted_bags: Number(e.target.value) }))}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Start date</label>
+              <Input
+                type="date"
+                value={form.start_date}
+                onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">End date</label>
+              <Input
+                type="date"
+                value={form.end_date}
+                onChange={(e) => setForm((f) => ({ ...f, end_date: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Notes</label>
+            <textarea
+              rows={3}
+              className="w-full text-sm rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
+              placeholder="Internal notes (deal terms, contact, etc.)"
+              value={form.notes}
+              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+            />
+          </div>
+
+          <p className="text-xs text-muted-foreground bg-muted/40 rounded px-2 py-1.5">
+            <strong>Active rule:</strong> A campaign counts towards Occupancy when its status is <code className="text-[11px]">active</code> AND today is within the start/end date range (when set).
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={!canSave || save.isPending}>
+            {save.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+            {isEdit ? "Save changes" : "Create campaign"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Sub-tab 2: Occupancy (derived KPI view) ──────────────────────────────────
+
+function OccupancyTab() {
+  const occQ = useQuery<OccupancyResponse>({
+    queryKey: ["occupancy"],
+    queryFn: () => api.get("/occupancy"),
+  });
+
+  if (occQ.isError) {
+    return (
+      <ErrorState
+        title="Couldn't load occupancy data"
+        error={occQ.error}
+        onRetry={() => occQ.refetch()}
+      />
+    );
+  }
+
+  if (occQ.isLoading || !occQ.data) {
+    return (
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
+        </div>
+        <Skeleton className="h-40" />
+      </div>
+    );
+  }
+
+  const data = occQ.data;
+  const freeIsHealthy = data.totalSlots > 0 && data.slotsFree / data.totalSlots > 0.5;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground">
+        Theoretical capacity view — what's contractually sold vs. free for the sales team to sell.
+        This is the commercial truth and may differ from what's actually playing in the Ad Slots tab.
+      </p>
+
+      {/* Top stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatCard label="Total fleet slots" value={data.totalSlots} sub={`${data.totalBags} bags × ${data.slotsPerBag}`} />
+        <StatCard
+          label="Sold (active)"
+          value={data.slotsSold}
+          sub={`${data.utilizationPct}% utilisation`}
+        />
+        <StatCard
+          label="Free"
+          value={data.slotsFree}
+          sub="available to sell"
+          accent={freeIsHealthy ? "green" : undefined}
+        />
+        <StatCard label="Active campaigns" value={data.activeCampaigns.length} />
+      </div>
+
+      {/* Active campaigns */}
+      {data.activeCampaigns.length === 0 ? (
+        <Card>
+          <CardContent className="p-6 text-center text-sm text-muted-foreground">
+            No active campaigns currently consuming inventory.
+            {data.inactiveCampaignCount > 0 && (
+              <p className="text-xs mt-2">
+                {data.inactiveCampaignCount} inactive campaign{data.inactiveCampaignCount !== 1 ? "s" : ""}{" "}
+                (drafts, paused, or ended) not counted here.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Client</TableHead>
+                  <TableHead>Campaign</TableHead>
+                  <TableHead className="text-right">Bags</TableHead>
+                  <TableHead className="w-32">% of fleet</TableHead>
+                  <TableHead>Date range</TableHead>
+                  <TableHead className="text-right">Days left</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.activeCampaigns.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell className="font-medium">{c.client_name}</TableCell>
+                    <TableCell>{c.campaign_name}</TableCell>
+                    <TableCell className="text-right tabular-nums">{c.contracted_bags}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-primary/70 rounded-full"
+                            style={{ width: `${Math.min(100, c.pct_of_fleet)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs tabular-nums w-12 text-right">{c.pct_of_fleet}%</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {formatDate(c.start_date)} – {formatDate(c.end_date)}
+                    </TableCell>
+                    <TableCell className="text-right text-xs tabular-nums">
+                      {c.days_remaining != null ? `${c.days_remaining}d` : "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {data.inactiveCampaignCount > 0 && (
+              <div className="px-4 py-2 text-xs text-muted-foreground border-t bg-muted/30">
+                + {data.inactiveCampaignCount} inactive campaign{data.inactiveCampaignCount !== 1 ? "s" : ""}
+                {" "}(drafts, paused, or ended) not counted here.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Sales runway callout */}
+      {data.slotsFree > 0 && data.totalBags > 0 && (
+        <Card className="bg-primary/5 border-primary/20">
+          <CardContent className="p-4 text-sm">
+            <strong>Sales runway:</strong>{" "}
+            {data.slotsFree} slot{data.slotsFree !== 1 ? "s" : ""} available — could sell up to{" "}
+            <strong>{Math.floor(data.slotsFree / 1)}</strong> more bag-equivalents before the fleet is contractually full.
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: number | string;
+  sub?: string;
+  accent?: "green" | "amber" | "red";
+}) {
+  const accentClass =
+    accent === "green" ? "text-green-700"
+    : accent === "amber" ? "text-amber-700"
+    : accent === "red" ? "text-destructive"
+    : "";
+  return (
+    <div className="border rounded-md p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`text-2xl font-bold tabular-nums ${accentClass}`}>{value}</p>
+      {sub && <p className="text-[11px] text-muted-foreground mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+// ── Sub-tab 3: Ad Slots (operational view, derived from playlists) ───────────
+
+function AdSlotsTab() {
+  const slotsQ = useQuery<AdSlotsResponse>({
     queryKey: ["ad-slots"],
     queryFn: () => api.get("/ad-slots"),
   });
 
-  const [newOpen, setNewOpen] = useState(false);
-  const [deploying, setDeploying] = useState<Campaign | null>(null);
+  if (slotsQ.isError) {
+    return (
+      <ErrorState
+        title="Couldn't load ad slot data"
+        error={slotsQ.error}
+        onRetry={() => slotsQ.refetch()}
+      />
+    );
+  }
+
+  if (slotsQ.isLoading || !slotsQ.data) {
+    return (
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
+        </div>
+        {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32" />)}
+      </div>
+    );
+  }
+
+  const data = slotsQ.data;
+  const { totals } = data;
 
   return (
     <div className="space-y-4">
-      <Tabs defaultValue="campaigns">
-        <div className="flex items-center justify-between mb-4">
-          <TabsList>
-            <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
-            <TabsTrigger value="slots">
-              <Layers className="h-3.5 w-3.5 mr-1.5" />
-              Ad Slots
-            </TabsTrigger>
-          </TabsList>
-          <Button size="sm" onClick={() => setNewOpen(true)}>
-            <Plus className="h-3.5 w-3.5 mr-1" />New Campaign
-          </Button>
+      <p className="text-xs text-muted-foreground">
+        Operational view — what's actually queued to play, derived from current playlist deployments.
+        Ads with <strong>"DigiLite"</strong> in the filename are counted as filler (house promos in unsold inventory).
+      </p>
+
+      {/* Top stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatCard label="Total slots" value={totals.totalSlots} sub={`${data.bags.length} bags × ${data.slotsPerBag}`} />
+        <StatCard label="Filled (paid ads)" value={totals.filled} accent="green" />
+        <StatCard label="DigiLite filler" value={totals.filler} accent="amber" sub="capacity disguised as content" />
+        <StatCard label="Truly empty" value={totals.empty} />
+      </div>
+
+      {/* Per-bag grid */}
+      {data.bags.length === 0 ? (
+        <EmptyState
+          title="No bags found"
+          message="Connect at least one terminal to see its ad slots."
+          icon={<Truck className="h-5 w-5" />}
+        />
+      ) : (
+        <div className="space-y-3">
+          {data.bags.map((bag) => <BagSlotsCard key={bag.bag_id} bag={bag} slotsPerBag={data.slotsPerBag} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BagSlotsCard({ bag, slotsPerBag }: { bag: AdSlotsResponse["bags"][number]; slotsPerBag: number }) {
+  return (
+    <Card>
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Truck className="h-4 w-4 text-muted-foreground shrink-0" />
+            <Link to={`/fleet/${bag.bag_id}`} className="text-sm font-semibold text-primary hover:underline">
+              {bag.bag_name}
+            </Link>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
+              bag.status === "active"
+                ? "bg-green-50 text-green-700 border-green-200"
+                : "bg-gray-100 text-gray-600 border-gray-200"
+            }`}>{bag.status}</span>
+          </div>
+
+          <div className="flex items-center gap-3 text-xs">
+            {bag.playlist ? (
+              <Link to="/playlists" className="text-primary hover:underline flex items-center gap-1">
+                <ListMusic className="h-3 w-3" /> {bag.playlist.name}
+              </Link>
+            ) : (
+              <span className="text-muted-foreground italic">Not yet managed by CMS</span>
+            )}
+            <span className="text-muted-foreground">·</span>
+            <span className="tabular-nums">
+              <span className="text-green-700">{bag.filledCount}</span>
+              {" / "}
+              <span className="text-amber-700">{bag.fillerCount}</span>
+              {" / "}
+              <span className="text-muted-foreground">{bag.emptyCount}</span>
+            </span>
+          </div>
         </div>
 
-        {/* ── Campaigns list ── */}
-        <TabsContent value="campaigns">
-          <div className="border rounded-lg overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Campaign</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Dates</TableHead>
-                  <TableHead>Media</TableHead>
-                  <TableHead className="w-28" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLoading ? (
-                  Array.from({ length: 4 }).map((_, i) => (
-                    <TableRow key={i}><TableCell colSpan={6}><Skeleton className="h-4 w-full" /></TableCell></TableRow>
-                  ))
-                ) : campaigns.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No campaigns yet</TableCell>
-                  </TableRow>
-                ) : campaigns.map((c) => {
-                  const mediaCount = allMedia.filter((m) => m.campaign_id === c.id).length;
-                  const deployedBags = new Set(adSlots.filter((s) => s.campaign_id === c.id).map((s) => s.bag_id)).size;
-                  return (
-                    <TableRow key={c.id}>
-                      <TableCell className="font-medium">{c.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{c.client_name}</TableCell>
-                      <TableCell><StatusBadge status={c.status} /></TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {c.start_date ? new Date(c.start_date).toLocaleDateString() : "—"} –{" "}
-                        {c.end_date ? new Date(c.end_date).toLocaleDateString() : "—"}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {mediaCount} file{mediaCount !== 1 ? "s" : ""}
-                        {deployedBags > 0 && (
-                          <span className="ml-2 text-xs text-green-600">{deployedBags} terminal{deployedBags !== 1 ? "s" : ""}</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs"
-                          onClick={() => setDeploying(c)}
-                        >
-                          <Rocket className="h-3 w-3 mr-1" />Deploy
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
+        <div className={`grid gap-1.5`} style={{ gridTemplateColumns: `repeat(${slotsPerBag}, minmax(0, 1fr))` }}>
+          {bag.slots.map((s) => <SlotCell key={s.slot} slot={s} />)}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
-        {/* ── Ad Slots tab ── */}
-        <TabsContent value="slots">
-          <AdSlotsTab bags={bags} adSlots={adSlots} campaigns={campaigns} media={allMedia} />
-        </TabsContent>
-      </Tabs>
+function SlotCell({ slot }: { slot: AdSlotsResponse["bags"][number]["slots"][number] }) {
+  const { state, slot: idx, filename, file_type } = slot;
 
-      {newOpen && <NewCampaignDialog onClose={() => setNewOpen(false)} />}
+  if (state === "empty") {
+    return (
+      <div className="rounded-md border border-dashed p-2 text-center text-muted-foreground/70 bg-muted/20 text-xs">
+        <p className="font-mono">{idx}</p>
+        <p className="mt-1">—</p>
+      </div>
+    );
+  }
 
-      {deploying && (
-        <DeployDialog
-          campaign={deploying}
-          bags={bags}
-          allMedia={allMedia}
-          adSlots={adSlots}
-          onClose={() => setDeploying(null)}
-        />
+  const isVideo = file_type === "video" || file_type === "mp4";
+  const fillerStyles = "bg-amber-50 border-amber-200 text-amber-900";
+  const filledStyles = "bg-green-50 border-green-200 text-green-900";
+
+  return (
+    <div className={`rounded-md border p-2 text-xs ${state === "filler" ? fillerStyles : filledStyles}`}>
+      <p className="font-mono opacity-70">{idx}</p>
+      <div className="flex items-center gap-1 mt-1">
+        {isVideo
+          ? <Film className="h-3 w-3 shrink-0" />
+          : <ImageIcon className="h-3 w-3 shrink-0" />}
+        <p className="truncate font-medium" title={filename}>{filename ?? ""}</p>
+      </div>
+      {state === "filler" && (
+        <p className="text-[10px] mt-0.5 opacity-80">DigiLite filler</p>
       )}
     </div>
   );
