@@ -167,6 +167,19 @@ function AllRidersTimesheet({ riders, timeRange }: { riders: Rider[]; timeRange:
   const endStr = new Date(timeRange.endMs).toISOString();
   const qs = `startTime=${encodeURIComponent(startStr)}&endTime=${encodeURIComponent(endStr)}`;
 
+  // Bag list lookup — used to show the friendly "Terminal X" name next to each
+  // rider rather than the raw Colorlight numeric ID. TanStack dedupes this
+  // query with other components on the page that fetch ["bags"].
+  const bagsQ = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["bags"],
+    queryFn: () => api.get("/bags"),
+  });
+  const bagNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const b of bagsQ.data ?? []) m.set(b.id, b.name);
+    return m;
+  }, [bagsQ.data]);
+
   const queries = useQueries({
     queries: ridersWithBags.map((rider) => ({
       queryKey: ["rider-sessions", rider.id, startStr, endStr],
@@ -220,10 +233,9 @@ function AllRidersTimesheet({ riders, timeRange }: { riders: Rider[]; timeRange:
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="border-b">
-            <th className="text-left px-3 py-2 font-medium sticky left-0 bg-background z-10 min-w-[160px]">
-              Rider
+            <th className="text-left px-3 py-2 font-medium sticky left-0 bg-background z-10 min-w-[200px]">
+              Rider · Terminal
             </th>
-            <th className="text-left px-3 py-2 font-medium">Bag</th>
             {dateColumns.map((d) => {
               const date = new Date(d + "T00:00:00");
               return (
@@ -256,9 +268,9 @@ function AllRidersTimesheet({ riders, timeRange }: { riders: Rider[]; timeRange:
                   >
                     {rider.name}
                   </Link>
-                </td>
-                <td className="px-3 py-2 text-muted-foreground font-mono">
-                  {rider.bag_id}
+                  <span className="text-muted-foreground ml-2">
+                    · {bagNameById.get(rider.bag_id!) ?? rider.bag_id}
+                  </span>
                 </td>
                 {dateColumns.map((d) => {
                   const dayData = byDate.get(d);
@@ -348,6 +360,14 @@ function SingleRiderTimesheet({
     staleTime: 5 * 60_000,
   });
 
+  // Bag-name lookup so we can render the friendly "Terminal X" alongside the rider.
+  // Shares the ["bags"] query key with the matrix view so TanStack dedupes.
+  const bagsQ = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["bags"],
+    queryFn: () => api.get("/bags"),
+  });
+  const bagName = bagsQ.data?.find((b) => b.id === rider.bag_id)?.name ?? null;
+
   const downloadCsv = () => {
     window.location.href = `/api/riders/${rider.id}/sessions/export?${qs}`;
   };
@@ -362,8 +382,8 @@ function SingleRiderTimesheet({
           >
             {rider.name}
           </Link>
-          <span className="text-xs text-muted-foreground ml-2 font-mono">
-            bag #{rider.bag_id}
+          <span className="text-xs text-muted-foreground ml-2">
+            · {bagName ?? `bag #${rider.bag_id}`}
           </span>
         </div>
         <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={downloadCsv}>
