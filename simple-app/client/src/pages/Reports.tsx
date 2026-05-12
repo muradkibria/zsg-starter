@@ -12,6 +12,7 @@ import { ErrorState } from "@/components/ui/error-state";
 import { TimeRangePicker, defaultRange, type TimeRange } from "@/components/map/TimeRangePicker";
 import { BagFilter, applyBagFilter } from "@/components/map/BagFilter";
 import { useLiveBags } from "@/hooks/use-live-bags";
+import { CampaignReportsTab } from "@/pages/CampaignReports";
 
 interface Campaign { id: string; name: string }
 interface Zone { id: string; name: string }
@@ -945,6 +946,7 @@ export function Reports() {
       <TabsList className="mb-4">
         <TabsTrigger value="timesheet">Timesheets</TabsTrigger>
         <TabsTrigger value="adplays">Ad Plays</TabsTrigger>
+        <TabsTrigger value="campaignreport">Campaign Report</TabsTrigger>
         <TabsTrigger value="campaign">Campaign</TabsTrigger>
         <TabsTrigger value="zone">Zone</TabsTrigger>
       </TabsList>
@@ -955,6 +957,10 @@ export function Reports() {
 
       <TabsContent value="adplays">
         <AdPlaysTab />
+      </TabsContent>
+
+      <TabsContent value="campaignreport">
+        <CampaignReportsTab />
       </TabsContent>
 
       <TabsContent value="campaign">

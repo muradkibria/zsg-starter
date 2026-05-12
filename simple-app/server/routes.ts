@@ -27,6 +27,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { publishRouter } = await import("./colorlight/publish-routes.js");
   const { playlistRouter } = await import("./store/playlist-routes.js");
   const { campaignStoreRouter } = await import("./store/campaign-routes.js");
+  const { tflRouter } = await import("./store/tfl-routes.js");
+  const { reportRouter } = await import("./reports/report-routes.js");
   const { stubRouter } = await import("./colorlight/stub-router.js");
   const { riderStoreRouter } = await import("./store/rider-routes.js");
   const { startColorlightGpsPoller } = await import("./colorlight/gps-poller.js");
@@ -44,6 +46,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api", publishRouter);
   app.use("/api", playlistRouter);
   app.use("/api", campaignStoreRouter);
+  app.use("/api", tflRouter);
+  app.use("/api", reportRouter);
   app.use("/api", liveRouter);
   app.use("/api", riderStoreRouter);
   app.use("/api", stubRouter);
