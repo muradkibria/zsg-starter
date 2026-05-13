@@ -389,9 +389,47 @@ export function getUsername() {
 }
 
 // ── Write-mode safety gate ───────────────────────────────────────────────────
-// Defaults to OFF. All write methods below short-circuit unless this is true.
+//
+// Three modes:
+//   1. "off"      — COLORLIGHT_WRITES_ENABLED=false and no test-bag allowlist:
+//                   All writes are dry-run-only.
+//   2. "test-bag" — COLORLIGHT_WRITES_ENABLED=false but COLORLIGHT_TEST_BAG_IDS
+//                   is set: uploads + program creation proceed for real, but
+//                   program-to-bag assignments only succeed if every target
+//                   bag is in the allowlist. Used for safe single-bag testing.
+//   3. "on"       — COLORLIGHT_WRITES_ENABLED=true: all writes go through.
+//
+// `writesEnabled()` returns true in modes 2 and 3 (so uploads/program creation
+// happen). `canWriteToBag()` adds the per-bag gate for assignments.
+
+export function getTestBagAllowlist(): string[] {
+  const raw = (process.env.COLORLIGHT_TEST_BAG_IDS ?? "").trim();
+  if (!raw) return [];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 export function writesEnabled(): boolean {
+  if (process.env.COLORLIGHT_WRITES_ENABLED === "true") return true;
+  // Test-bag mode also counts as "writes on" for non-bag-specific operations
+  // (upload, program creation). Those are harmless on their own — they only
+  // affect the world when a program gets assigned to a bag, which is where
+  // canWriteToBag() enforces the per-bag check.
+  return getTestBagAllowlist().length > 0;
+}
+
+export function isMasterWritesEnabled(): boolean {
   return process.env.COLORLIGHT_WRITES_ENABLED === "true";
+}
+
+export function isTestBagMode(): boolean {
+  return !isMasterWritesEnabled() && getTestBagAllowlist().length > 0;
+}
+
+/** Check whether assigning a program to a given bag is currently permitted. */
+export function canWriteToBag(bagId: string | number): boolean {
+  if (isMasterWritesEnabled()) return true;
+  const allow = getTestBagAllowlist();
+  return allow.includes(String(bagId));
 }
 
 // ── Media upload (TUS resumable protocol) ────────────────────────────────────
@@ -667,13 +705,29 @@ export async function createProgram(
   return { id: res.data.id, name: res.data.title_raw ?? title, vsn_name: res.data.vsn_name };
 }
 
+/** Custom error subclass so callers can return 403 (not 502) for allowlist blocks. */
+export class BagWriteBlockedError extends Error {
+  blocked: string[];
+  allowed: string[];
+  constructor(blocked: string[], allowed: string[]) {
+    super(
+      `Write blocked — bag(s) [${blocked.join(", ")}] are not in COLORLIGHT_TEST_BAG_IDS allowlist. ` +
+      `Allowed bags: [${allowed.join(", ") || "(none)"}].`
+    );
+    this.name = "BagWriteBlockedError";
+    this.blocked = blocked;
+    this.allowed = allowed;
+  }
+}
+
 /** Push a created program out to selected terminals. */
 export async function assignProgramToTerminals(
   programId: number,
   terminalGroupId: number,
   terminalIds: number[],
   pushToAllInGroup: boolean = false
-): Promise<{ success: boolean; dryRun?: boolean }> {
+): Promise<{ success: boolean; dryRun?: boolean; blocked?: string[] }> {
+  // Pure dry-run mode (no master flag, no test-bag allowlist)
   if (!writesEnabled()) {
     console.warn(
       `[colorlight DRY-RUN] assignProgramToTerminals(programId=${programId}, group=${terminalGroupId}, ` +
@@ -681,6 +735,21 @@ export async function assignProgramToTerminals(
     );
     return { success: true, dryRun: true };
   }
+
+  // Test-bag mode — enforce per-bag allowlist
+  if (isTestBagMode()) {
+    const blocked = terminalIds.filter((id) => !canWriteToBag(id));
+    if (blocked.length > 0) {
+      throw new BagWriteBlockedError(
+        blocked.map(String),
+        getTestBagAllowlist()
+      );
+    }
+    console.log(
+      `[colorlight TEST-BAG MODE] Assigning program ${programId} to allowlisted bags: [${terminalIds.join(",")}]`
+    );
+  }
+
   await client!.put(
     `/wp-json/wp/v2/programs/${programId}?flag=terminalgroup`,
     {

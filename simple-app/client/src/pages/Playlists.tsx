@@ -617,6 +617,16 @@ function DeployDialog({
   onDeployed: () => void;
 }) {
   const { bags } = useLiveBags();
+  const { data: sysStatus } = useQuery<{
+    isTestBagMode?: boolean;
+    testBagAllowlist?: string[];
+    masterWritesEnabled?: boolean;
+  }>({
+    queryKey: ["system-status"],
+    queryFn: () => api.get("/system/status"),
+  });
+  const isTestBagMode = !!sysStatus?.isTestBagMode;
+  const allowlist = new Set(sysStatus?.testBagAllowlist ?? []);
   const [selected, setSelected] = useState<Set<string>>(
     new Set(playlist.deployed_to.map((d) => d.bag_id))
   );
@@ -707,15 +717,22 @@ function DeployDialog({
                 <div className="border rounded-md max-h-60 overflow-y-auto">
                   {filtered.map((b) => {
                     const checked = selected.has(b.id);
+                    const blocked = isTestBagMode && !allowlist.has(b.id);
                     return (
                       <label
                         key={b.id}
-                        className={`flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-accent ${checked ? "bg-accent/50" : ""}`}
+                        className={`flex items-center gap-2 px-3 py-1.5 text-xs ${
+                          blocked
+                            ? "opacity-50 cursor-not-allowed bg-muted/30"
+                            : `cursor-pointer hover:bg-accent ${checked ? "bg-accent/50" : ""}`
+                        }`}
+                        title={blocked ? "Not in test-bag allowlist — read-only" : undefined}
                       >
                         <input
                           type="checkbox"
                           checked={checked}
-                          onChange={() => toggle(b.id)}
+                          disabled={blocked}
+                          onChange={() => !blocked && toggle(b.id)}
                           className="h-3.5 w-3.5"
                         />
                         <span
@@ -724,6 +741,9 @@ function DeployDialog({
                           }`}
                         />
                         <span className="flex-1 truncate">{b.name}</span>
+                        {blocked && (
+                          <span className="text-[10px] text-muted-foreground italic">locked</span>
+                        )}
                         <span className="text-[10px] text-muted-foreground capitalize">{b.status}</span>
                       </label>
                     );
@@ -731,7 +751,14 @@ function DeployDialog({
                 </div>
               </div>
 
-              {isDev && (
+              {isTestBagMode && (
+                <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded px-2 py-1.5 flex items-center gap-1.5">
+                  <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
+                  Test-bag mode — only {allowlist.size} bag{allowlist.size !== 1 ? "s" : ""} accept live writes. Others are locked.
+                </p>
+              )}
+
+              {isDev && !isTestBagMode && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-center gap-1.5">
                   <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
                   Dev mode — deploy will be logged but no real action taken.

@@ -12,6 +12,11 @@ import multer from "multer";
 import crypto from "crypto";
 import {
   writesEnabled,
+  isMasterWritesEnabled,
+  isTestBagMode,
+  getTestBagAllowlist,
+  canWriteToBag,
+  BagWriteBlockedError,
   searchByChecksum,
   tusCreate,
   tusUpload,
@@ -40,8 +45,14 @@ const router = Router();
 // ── System status (UI uses this to show DEV banner) ──────────────────────────
 
 router.get("/system/status", (_req, res) => {
+  const masterOn = isMasterWritesEnabled();
+  const testMode = isTestBagMode();
   res.json({
     writesEnabled: writesEnabled(),
+    masterWritesEnabled: masterOn,
+    isTestBagMode: testMode,
+    testBagAllowlist: getTestBagAllowlist(),
+    writeMode: masterOn ? "live" : testMode ? "test-bag" : "off",
     mode: process.env.MOCK === "true" ? "mock" : "live",
     devUploadCount: listDevUploads().length,
   });

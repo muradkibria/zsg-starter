@@ -22,6 +22,10 @@ import {
 } from "./playlist-store.js";
 import {
   writesEnabled,
+  isTestBagMode,
+  getTestBagAllowlist,
+  canWriteToBag,
+  BagWriteBlockedError,
   createProgram,
   assignProgramToTerminals,
   listTerminals,
@@ -181,12 +185,44 @@ router.post("/playlists/:id/deploy", async (req, res, next) => {
       }
     }
 
+    // Pre-flight allowlist check — in test-bag mode, deploys must target only
+    // bags in COLORLIGHT_TEST_BAG_IDS. Reject the whole batch if any bag is
+    // out of bounds, so we don't get partial deploys.
+    if (isTestBagMode()) {
+      const blocked = bagIds.filter((b) => !canWriteToBag(b));
+      if (blocked.length > 0) {
+        res.status(403).json({
+          error: "Some target bags aren't in the test-bag allowlist",
+          detail:
+            `You're in TEST-BAG mode (COLORLIGHT_TEST_BAG_IDS is set). ` +
+            `Deploys must target only those bags. Remove the blocked bags from your selection, or unset ` +
+            `COLORLIGHT_TEST_BAG_IDS once you're ready for fleet-wide writes.`,
+          blocked,
+          allowed: getTestBagAllowlist(),
+        });
+        return;
+      }
+    }
+
     // Create or re-create the program
     const program = await createProgram(playlist.name, programItems);
 
     // Assign to bags
     const numericBagIds = bagIds.map((b) => Number(b)).filter((n) => Number.isFinite(n));
-    await assignProgramToTerminals(program.id, terminalGroupId, numericBagIds);
+    try {
+      await assignProgramToTerminals(program.id, terminalGroupId, numericBagIds);
+    } catch (err) {
+      if (err instanceof BagWriteBlockedError) {
+        // Defensive — should have been caught by the pre-flight check above
+        res.status(403).json({
+          error: err.message,
+          blocked: err.blocked,
+          allowed: err.allowed,
+        });
+        return;
+      }
+      throw err;
+    }
 
     // Record deployment locally
     const deployments = bagIds.map((b) => ({
