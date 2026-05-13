@@ -376,13 +376,31 @@ export async function getMediaPlayTimes(
 }
 
 export async function listMedia(): Promise<ColorlightMediaItem[]> {
-  // Colorlight's WP REST gateway rejects bare GETs with 400. Pagination params
-  // are required; `context: "edit"` / `status: "any"` need admin perms and 400
-  // for EDITOR roles — so we ask for the default (published) view.
-  const res = await client!.get<ColorlightMediaItem[]>("/wp-json/wp/v2/media", {
-    params: { per_page: 100, page: 1 },
-  });
-  return res.data ?? [];
+  // Colorlight's gateway throws a Spring 400 on bare GET; we try a few
+  // param shapes and log which (if any) succeeds so we can pin it down.
+  const attempts: Array<{ label: string; params: Record<string, any> }> = [
+    { label: "media_type=video", params: { per_page: 50, page: 1, media_type: "video" } },
+    { label: "parent=0", params: { per_page: 50, page: 1, parent: 0 } },
+    { label: "minimal", params: { per_page: 50 } },
+    { label: "with-context", params: { per_page: 50, page: 1, status: "any", context: "edit" } },
+  ];
+  for (const a of attempts) {
+    try {
+      const res = await client!.get<ColorlightMediaItem[]>("/wp-json/wp/v2/media", {
+        params: a.params,
+      });
+      console.log(`[listMedia] OK with params: ${a.label} (${(res.data ?? []).length} items)`);
+      return res.data ?? [];
+    } catch (err: any) {
+      console.warn(
+        `[listMedia] FAIL ${a.label} → ${err?.response?.status} ${err?.response?.statusText} body:`,
+        typeof err?.response?.data === "string"
+          ? err.response.data.slice(0, 200)
+          : JSON.stringify(err?.response?.data)?.slice(0, 200),
+      );
+    }
+  }
+  throw new Error("listMedia: all param variants returned 400");
 }
 
 export function getBaseURL() {
