@@ -245,8 +245,20 @@ router.post("/playlists/:id/deploy", async (req, res, next) => {
         : `DRY RUN — would have deployed playlist "${playlist.name}" (${playlist.items.length} items) to ${bagIds.length} bag(s). No actual changes made.`,
       playlist: updated,
     });
-  } catch (err) {
-    next(err);
+  } catch (err: any) {
+    // Don't fall through to Express's HTML default — surface upstream details
+    const upstreamStatus = err?.response?.status;
+    const upstreamBody = err?.response?.data;
+    console.error("[playlist-deploy]", `upstream=${upstreamStatus}`, "msg:", err?.message,
+      "body:", typeof upstreamBody === "string"
+        ? upstreamBody.slice(0, 500)
+        : JSON.stringify(upstreamBody)?.slice(0, 500));
+    res.status(502).json({
+      error: "Deploy failed talking to Colorlight",
+      detail: err?.message ?? String(err),
+      upstreamStatus: upstreamStatus ?? null,
+      upstreamBody: typeof upstreamBody === "string" ? upstreamBody : upstreamBody ?? null,
+    });
   }
 });
 

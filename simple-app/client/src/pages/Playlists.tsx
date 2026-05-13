@@ -758,6 +758,15 @@ function DeployDialog({
                 </p>
               )}
 
+              {deploy.isError && (
+                <p className="text-xs text-red-800 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                  <strong>Deploy failed:</strong>{" "}
+                  {(deploy.error as any)?.response?.data?.error ??
+                   (deploy.error as any)?.response?.data?.detail ??
+                   (deploy.error as Error)?.message ?? "Unknown error"}
+                </p>
+              )}
+
               {isDev && !isTestBagMode && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-center gap-1.5">
                   <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
