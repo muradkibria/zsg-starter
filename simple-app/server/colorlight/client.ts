@@ -714,10 +714,14 @@ export async function createProgram(
     return { id: -1, name: title, dryRun: true };
   }
   const program_info = buildProgramInfo(title, mediaItems);
+  // Colorlight's gateway requires the payload wrapped under a top-level
+  // `Programs` object (error otherwise: "Programs must be object").
   const res = await client!.post("/wp-json/wp/v2/programs", {
-    title,
-    Terminalgroup: [],
-    program_info,
+    Programs: {
+      title,
+      Terminalgroup: [],
+      program_info,
+    },
   });
   return { id: res.data.id, name: res.data.title_raw ?? title, vsn_name: res.data.vsn_name };
 }
