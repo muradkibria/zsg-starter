@@ -964,12 +964,24 @@ router.get("/bags/:id/play-times", async (req, res, next) => {
 // ── Error fall-through ───────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-router.use((err: any, _req: any, res: any, _next: any) => {
-  console.error("[colorlight-route]", err?.response?.status ?? "", err?.message ?? err);
+router.use((err: any, req: any, res: any, _next: any) => {
+  const upstreamUrl = err?.config?.url ?? err?.request?.path ?? "?";
+  const upstreamMethod = err?.config?.method?.toUpperCase?.() ?? "?";
+  const upstreamStatus = err?.response?.status ?? "";
+  const upstreamBody = err?.response?.data;
+  console.error(
+    "[colorlight-route]",
+    `${req.method} ${req.originalUrl} →`,
+    `${upstreamMethod} ${upstreamUrl}`,
+    `upstream=${upstreamStatus}`,
+    "msg:", err?.message ?? err,
+    "body:", typeof upstreamBody === "string" ? upstreamBody.slice(0, 500) : JSON.stringify(upstreamBody)?.slice(0, 500),
+  );
   res.status(502).json({
     error: "Colorlight upstream error",
     detail: err?.message ?? String(err),
     status: err?.response?.status ?? null,
+    upstreamBody: typeof upstreamBody === "string" ? upstreamBody.slice(0, 500) : upstreamBody,
   });
 });
 
