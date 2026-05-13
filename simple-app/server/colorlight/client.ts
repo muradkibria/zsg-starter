@@ -376,31 +376,25 @@ export async function getMediaPlayTimes(
 }
 
 export async function listMedia(): Promise<ColorlightMediaItem[]> {
-  // Colorlight's gateway throws a Spring 400 on bare GET; we try a few
-  // param shapes and log which (if any) succeeds so we can pin it down.
-  const attempts: Array<{ label: string; params: Record<string, any> }> = [
-    { label: "media_type=video", params: { per_page: 50, page: 1, media_type: "video" } },
-    { label: "parent=0", params: { per_page: 50, page: 1, parent: 0 } },
-    { label: "minimal", params: { per_page: 50 } },
-    { label: "with-context", params: { per_page: 50, page: 1, status: "any", context: "edit" } },
-  ];
-  for (const a of attempts) {
-    try {
-      const res = await client!.get<ColorlightMediaItem[]>("/wp-json/wp/v2/media", {
-        params: a.params,
-      });
-      console.log(`[listMedia] OK with params: ${a.label} (${(res.data ?? []).length} items)`);
-      return res.data ?? [];
-    } catch (err: any) {
-      console.warn(
-        `[listMedia] FAIL ${a.label} → ${err?.response?.status} ${err?.response?.statusText} body:`,
-        typeof err?.response?.data === "string"
-          ? err.response.data.slice(0, 200)
-          : JSON.stringify(err?.response?.data)?.slice(0, 200),
-      );
-    }
+  // Colorlight's gateway demands the `flag=filter` query param on this endpoint
+  // (confirmed by inspecting their own web UI's network calls). Without it the
+  // Spring filter rejects every request with a stock 400 before reaching WP.
+  // Pagination: walk pages until we've seen X-Wp-Total items (cap 500 to be safe).
+  const PER_PAGE = 100;
+  const HARD_CAP = 500;
+  const all: ColorlightMediaItem[] = [];
+  let page = 1;
+  while (all.length < HARD_CAP) {
+    const res = await client!.get<ColorlightMediaItem[]>("/wp-json/wp/v2/media", {
+      params: { page, per_page: PER_PAGE, flag: "filter" },
+    });
+    const batch = res.data ?? [];
+    all.push(...batch);
+    const total = Number(res.headers["x-wp-total"] ?? all.length);
+    if (all.length >= total || batch.length < PER_PAGE) break;
+    page++;
   }
-  throw new Error("listMedia: all param variants returned 400");
+  return all;
 }
 
 export function getBaseURL() {
