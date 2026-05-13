@@ -718,7 +718,7 @@ export async function createProgram(
   // `Programs` object (error otherwise: "Programs must be object").
   const res = await client!.post("/wp-json/wp/v2/programs", {
     Programs: {
-      title,
+      Title: title,
       Terminalgroup: [],
       program_info,
     },
