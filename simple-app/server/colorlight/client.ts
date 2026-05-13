@@ -376,10 +376,11 @@ export async function getMediaPlayTimes(
 }
 
 export async function listMedia(): Promise<ColorlightMediaItem[]> {
-  // Colorlight's WP REST gateway rejects bare GETs with 400 — pass the same
-  // pagination/context params we use for the /leds endpoint.
+  // Colorlight's WP REST gateway rejects bare GETs with 400. Pagination params
+  // are required; `context: "edit"` / `status: "any"` need admin perms and 400
+  // for EDITOR roles — so we ask for the default (published) view.
   const res = await client!.get<ColorlightMediaItem[]>("/wp-json/wp/v2/media", {
-    params: { per_page: 100, page: 1, status: "any", context: "edit" },
+    params: { per_page: 100, page: 1 },
   });
   return res.data ?? [];
 }
