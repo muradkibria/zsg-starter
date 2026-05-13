@@ -714,16 +714,83 @@ export async function createProgram(
     return { id: -1, name: title, dryRun: true };
   }
   const program_info = buildProgramInfo(title, mediaItems);
-  // Colorlight's gateway requires the payload wrapped under a top-level
-  // `Programs` object (error otherwise: "Programs must be object").
+  const Programs = buildVsnPrograms(mediaItems);
+  // Shape verified against a successful capture of Colorlight's own web UI
+  // (see /api-capture/2026-05-13). Required keys at top level: title (lowercase),
+  // Terminalgroup, program_info (UI metadata), Programs (actual VSN spec), status.
   const res = await client!.post("/wp-json/wp/v2/programs", {
-    Programs: {
-      Title: title,
-      Terminalgroup: [],
-      program_info,
-    },
+    title,
+    Terminalgroup: [],
+    program_info,
+    Programs,
+    status: "publish",
   });
   return { id: res.data.id, name: res.data.title_raw ?? title, vsn_name: res.data.vsn_name };
+}
+
+/**
+ * Build the canonical VSN Programs spec — this is what Colorlight actually
+ * ships to bags. One Page per media item, each page → one File Window region
+ * containing one Item. Mirrors what the Colorlight web UI sends.
+ */
+function buildVsnPrograms(mediaItems: ProgramMediaItem[]) {
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
+  const Pages = mediaItems.map((m) => ({
+    AppointDuration: 3600000,
+    Opacity: 1,
+    LoopType: 1,
+    BgColor: "0xFF000000",
+    Regions: [
+      {
+        type: 3,
+        Layer: 1,
+        Rect: {
+          X: 0, Y: 0,
+          Width: SCREEN_WIDTH, Height: SCREEN_HEIGHT,
+          BorderWidth: 0, BorderColor: "#ffff00",
+        },
+        Name: "File_Window",
+        IsScheduleRegion: 0,
+        Items: [
+          {
+            Type: 3,
+            Duration: m.duration_seconds * 1000,
+            PlayTimes: "1",
+            Volume: "1.000000",
+            Loop: 1,
+            PlayLength: m.duration_seconds * 1000,
+            Schedule: {
+              IsLimitTime: 0,
+              StartTime: "00:00:00",
+              EndTime: "23:59:59",
+              IsLimitDate: 0,
+              StartDay: dateStr,
+              StartDayTime: "00:00:00",
+              EndDay: dateStr,
+              EndDayTime: "23:59:59",
+              IsLimitWeek: 0,
+              LimitWeek: "1,1,1,1,1,1,1",
+            },
+            Trigger: { Type: "lightStrip", Value: "0" },
+            FileSource: {
+              IsRelative: 1,
+              FilePath: "",
+              Resource_ID: m.fileID,
+              OriginName: m.filename,
+            },
+            ReserveAS: 0,
+          },
+        ],
+      },
+    ],
+  }));
+  return {
+    Program: {
+      Information: { Width: SCREEN_WIDTH, Height: SCREEN_HEIGHT, Scale: 1 },
+      Pages,
+    },
+  };
 }
 
 /** Custom error subclass so callers can return 403 (not 502) for allowlist blocks. */
