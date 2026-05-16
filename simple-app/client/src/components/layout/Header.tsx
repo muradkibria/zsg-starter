@@ -18,7 +18,7 @@ export function Header() {
 
   return (
     <header className="h-14 border-b flex items-center justify-between px-6 shrink-0 bg-background">
-      <h1 className="text-sm font-medium">{titles[pathname] ?? "DigiLite CMS"}</h1>
+      <h1 className="text-sm font-medium">{titles[pathname] ?? "The DigiLite Hub"}</h1>
       <Avatar className="h-7 w-7">
         <AvatarFallback className="text-xs">DL</AvatarFallback>
       </Avatar>

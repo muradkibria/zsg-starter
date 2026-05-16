@@ -16,10 +16,21 @@ const nav = [
 
 export function Sidebar() {
   return (
-    <aside className="w-56 shrink-0 border-r bg-sidebar h-screen flex flex-col">
-      <div className="px-4 py-5 border-b">
-        <span className="font-semibold text-sm tracking-wide text-sidebar-foreground">
-          DigiLite CMS
+    <aside
+      className="w-56 shrink-0 h-screen flex flex-col text-white"
+      style={{ background: "linear-gradient(180deg, #062461 0%, #000000 100%)" }}
+    >
+      <div className="px-4 py-5 border-b border-white/10 flex items-center gap-2.5">
+        {/* The full logo is dark-blue on white; we invert + brighten so it reads
+            as white on the deep-blue sidebar without needing a separate asset. */}
+        <img
+          src="/digilite-logo-mark.png"
+          alt=""
+          className="h-7 w-auto shrink-0"
+          style={{ filter: "brightness(0) invert(1)" }}
+        />
+        <span className="font-semibold text-sm tracking-wide leading-tight">
+          The DigiLite Hub
         </span>
       </div>
       <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto">
@@ -32,8 +43,8 @@ export function Sidebar() {
               cn(
                 "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
                 isActive
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                  : "text-sidebar-foreground hover:bg-sidebar-accent/60"
+                  ? "bg-white/15 text-white font-medium"
+                  : "text-white/75 hover:bg-white/10 hover:text-white"
               )
             }
           >
@@ -42,6 +53,9 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+      <div className="px-4 py-3 border-t border-white/10 text-[10px] text-white/40 tracking-wide">
+        © DigiLite Advertising
+      </div>
     </aside>
   );
 }

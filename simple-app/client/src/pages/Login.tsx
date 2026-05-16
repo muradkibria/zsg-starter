@@ -15,11 +15,19 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="w-full max-w-sm px-4">
+    <div
+      className="min-h-screen flex items-center justify-center px-4"
+      style={{ background: "linear-gradient(135deg, #062461 0%, #000000 100%)" }}
+    >
+      <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-semibold">DigiLite CMS</h1>
-          <p className="text-muted-foreground text-sm mt-1">Admin Portal</p>
+          <img
+            src="/digilite-logo.png"
+            alt="DigiLite Advertising"
+            className="mx-auto h-16 w-auto mb-4 bg-white rounded-md p-3 shadow-lg"
+          />
+          <h1 className="text-2xl font-semibold text-white">The DigiLite Hub</h1>
+          <p className="text-white/70 text-sm mt-1">Admin Portal</p>
         </div>
         <Card>
           <CardHeader className="pb-4">
