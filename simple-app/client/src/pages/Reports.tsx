@@ -30,6 +30,9 @@ interface Session {
   started_at: string;
   ended_at: string;
   duration_seconds: number;
+  /** Time the rider was stationary (within IDLE_RADIUS_M for ≥ IDLE_THRESHOLD_MINUTES). */
+  idle_seconds?: number;
+  working_seconds?: number;
   gps_points: number;
 }
 
@@ -37,6 +40,10 @@ interface DayBreakdown {
   date: string;
   total_seconds: number;
   total_hours: number;
+  idle_seconds?: number;
+  idle_hours?: number;
+  working_seconds?: number;
+  working_hours?: number;
   session_count: number;
   sessions: Session[];
 }
@@ -229,8 +236,30 @@ function AllRidersTimesheet({ riders, timeRange }: { riders: Rider[]; timeRange:
     );
   }
 
+  // Roll up totals across all rider queries so the "Total" column shows the
+  // raw / working / idle breakdown too.
+  const riderTotals = queries.map((q) => {
+    let total = 0, idle = 0;
+    for (const d of q.data?.byDay ?? []) {
+      total += d.total_seconds ?? 0;
+      idle += d.idle_seconds ?? 0;
+    }
+    return { total_h: total / 3600, idle_h: idle / 3600, working_h: Math.max(0, (total - idle) / 3600) };
+  });
+
   return (
     <div className="overflow-x-auto">
+      <div className="flex items-center gap-3 text-[11px] text-muted-foreground mb-2 px-1">
+        <span className="font-medium text-foreground">Reading the cells:</span>
+        <span><strong className="text-foreground">5.2h</strong> raw</span>
+        <span>·</span>
+        <span><strong className="text-foreground">4.1h</strong> working</span>
+        <span>·</span>
+        <span className="text-amber-700"><strong>1.1h</strong> idle</span>
+        <span className="ml-auto italic">
+          Idle = bag on but no movement &gt; {IDLE_THRESHOLD_LABEL}. Cells with &gt;25% idle are flagged amber.
+        </span>
+      </div>
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="border-b">
@@ -258,7 +287,7 @@ function AllRidersTimesheet({ riders, timeRange }: { riders: Rider[]; timeRange:
             const q = queries[idx];
             const data = q.data;
             const byDate = new Map((data?.byDay ?? []).map((d) => [d.date, d]));
-            const totalHours = data?.totalHours ?? 0;
+            const totals = riderTotals[idx];
 
             return (
               <tr key={rider.id} className="border-b hover:bg-accent/30">
@@ -276,18 +305,32 @@ function AllRidersTimesheet({ riders, timeRange }: { riders: Rider[]; timeRange:
                 {dateColumns.map((d) => {
                   const dayData = byDate.get(d);
                   const hours = dayData?.total_hours ?? 0;
+                  const idle = dayData?.idle_hours ?? 0;
+                  const working = dayData?.working_hours ?? Math.max(0, hours - idle);
                   const sessions = dayData?.session_count ?? 0;
+                  const idleRatio = hours > 0 ? idle / hours : 0;
+                  const flagged = idleRatio > 0.25;
 
                   return (
-                    <td key={d} className="text-right px-3 py-2 tabular-nums">
+                    <td
+                      key={d}
+                      className={`text-right px-3 py-2 tabular-nums ${flagged ? "bg-amber-50/70" : ""}`}
+                    >
                       {q.isLoading ? (
                         <Skeleton className="h-3 w-8 ml-auto" />
                       ) : hours > 0 ? (
-                        <div title={`${sessions} session${sessions !== 1 ? "s" : ""}`}>
+                        <div title={`${sessions} session${sessions !== 1 ? "s" : ""} · ${working.toFixed(2)}h working · ${idle.toFixed(2)}h idle`}>
                           <div className="font-medium">{hours.toFixed(1)}h</div>
-                          {sessions > 1 && (
-                            <div className="text-[10px] text-muted-foreground">×{sessions}</div>
-                          )}
+                          <div className="text-[10px] text-muted-foreground leading-tight">
+                            <span className="text-foreground/80">{working.toFixed(1)}w</span>
+                            {idle > 0 && (
+                              <>
+                                {" "}·{" "}
+                                <span className="text-amber-700">{idle.toFixed(1)}i</span>
+                              </>
+                            )}
+                            {sessions > 1 && <span className="ml-1">×{sessions}</span>}
+                          </div>
                         </div>
                       ) : (
                         <span className="text-muted-foreground">—</span>
@@ -299,7 +342,18 @@ function AllRidersTimesheet({ riders, timeRange }: { riders: Rider[]; timeRange:
                   {q.isLoading ? (
                     <Skeleton className="h-3 w-10 ml-auto" />
                   ) : (
-                    <>{totalHours.toFixed(1)}h</>
+                    <div>
+                      <div>{totals.total_h.toFixed(1)}h</div>
+                      <div className="text-[10px] font-normal text-muted-foreground leading-tight">
+                        <span className="text-foreground/80">{totals.working_h.toFixed(1)}w</span>
+                        {totals.idle_h > 0 && (
+                          <>
+                            {" "}·{" "}
+                            <span className="text-amber-700">{totals.idle_h.toFixed(1)}i</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </td>
               </tr>
@@ -316,6 +370,11 @@ function AllRidersTimesheet({ riders, timeRange }: { riders: Rider[]; timeRange:
     </div>
   );
 }
+
+// Lifted out for the legend — keeps the component readable. The server's actual
+// threshold is set via IDLE_THRESHOLD_MINUTES env; we don't surface it via API
+// so this is a soft display label only.
+const IDLE_THRESHOLD_LABEL = "15 min within 50 m";
 
 // ── Single-rider deep view (sessions + ads) ─────────────────────────────────
 
@@ -408,12 +467,20 @@ function SingleRiderTimesheet({
         </p>
       ) : (
         <>
-          {/* Summary */}
-          <div className="grid grid-cols-3 gap-3">
-            <SummaryStat label="Total online" value={`${sessionsQ.data.totalHours.toFixed(1)}h`} />
-            <SummaryStat label="Sessions" value={String(sessionsQ.data.totalSessions)} />
-            <SummaryStat label="Active days" value={String(sessionsQ.data.byDay.length)} />
-          </div>
+          {/* Summary — show raw / working / idle so payroll has the breakdown at a glance */}
+          {(() => {
+            const totalSec = sessionsQ.data.byDay.reduce((s, d) => s + (d.total_seconds ?? 0), 0);
+            const idleSec  = sessionsQ.data.byDay.reduce((s, d) => s + (d.idle_seconds ?? 0), 0);
+            const workSec  = Math.max(0, totalSec - idleSec);
+            return (
+              <div className="grid grid-cols-4 gap-3">
+                <SummaryStat label="Total online" value={`${(totalSec / 3600).toFixed(1)}h`} />
+                <SummaryStat label="Working" value={`${(workSec / 3600).toFixed(1)}h`} />
+                <SummaryStat label="Idle" value={`${(idleSec / 3600).toFixed(1)}h`} tone={idleSec > 0 ? "amber" : undefined} />
+                <SummaryStat label="Active days" value={String(sessionsQ.data.byDay.length)} />
+              </div>
+            );
+          })()}
 
           {/* Per-day */}
           <div className="space-y-2">
@@ -430,10 +497,12 @@ function SingleRiderTimesheet({
   );
 }
 
-function SummaryStat({ label, value }: { label: string; value: string }) {
+function SummaryStat({
+  label, value, tone,
+}: { label: string; value: string; tone?: "amber" }) {
   return (
-    <div className="border rounded-md p-3 text-center">
-      <p className="text-2xl font-bold tabular-nums">{value}</p>
+    <div className={`border rounded-md p-3 text-center ${tone === "amber" ? "border-amber-300 bg-amber-50/60" : ""}`}>
+      <p className={`text-2xl font-bold tabular-nums ${tone === "amber" ? "text-amber-700" : ""}`}>{value}</p>
       <p className="text-xs text-muted-foreground">{label}</p>
     </div>
   );
@@ -444,6 +513,8 @@ function DayCard({ day }: { day: DayBreakdown }) {
   const label = date.toLocaleDateString(undefined, {
     weekday: "long", day: "numeric", month: "short",
   });
+  const idleSec = day.idle_seconds ?? 0;
+  const workingSec = day.working_seconds ?? Math.max(0, day.total_seconds - idleSec);
 
   return (
     <div className="border rounded-md overflow-hidden">
@@ -454,25 +525,39 @@ function DayCard({ day }: { day: DayBreakdown }) {
             {day.session_count} session{day.session_count !== 1 ? "s" : ""}
           </span>
         </div>
-        <span className="font-semibold tabular-nums">{formatHours(day.total_seconds)}</span>
+        <div className="flex items-center gap-3 tabular-nums">
+          <span className="font-semibold">{formatHours(day.total_seconds)}</span>
+          <span className="text-xs text-muted-foreground">
+            {formatHours(workingSec)} work
+            {idleSec > 0 && (
+              <> · <span className="text-amber-700">{formatHours(idleSec)} idle</span></>
+            )}
+          </span>
+        </div>
       </div>
       <table className="w-full text-xs">
         <tbody>
-          {day.sessions.map((s, i) => (
-            <tr key={s.id} className="border-t">
-              <td className="px-3 py-1.5 text-muted-foreground w-8">#{i + 1}</td>
-              <td className="px-3 py-1.5 font-mono">
-                {new Date(s.started_at).toLocaleTimeString()}
-              </td>
-              <td className="px-3 py-1.5 text-muted-foreground">→</td>
-              <td className="px-3 py-1.5 font-mono">
-                {new Date(s.ended_at).toLocaleTimeString()}
-              </td>
-              <td className="px-3 py-1.5 text-right tabular-nums w-20">
-                {formatHours(s.duration_seconds)}
-              </td>
-            </tr>
-          ))}
+          {day.sessions.map((s, i) => {
+            const sIdle = s.idle_seconds ?? 0;
+            return (
+              <tr key={s.id} className="border-t">
+                <td className="px-3 py-1.5 text-muted-foreground w-8">#{i + 1}</td>
+                <td className="px-3 py-1.5 font-mono">
+                  {new Date(s.started_at).toLocaleTimeString()}
+                </td>
+                <td className="px-3 py-1.5 text-muted-foreground">→</td>
+                <td className="px-3 py-1.5 font-mono">
+                  {new Date(s.ended_at).toLocaleTimeString()}
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums w-20">
+                  {formatHours(s.duration_seconds)}
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums w-24 text-amber-700">
+                  {sIdle > 0 ? `${formatHours(sIdle)} idle` : ""}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
