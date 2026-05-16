@@ -1,10 +1,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // TfL footfall store — persists the user's uploaded station footfall dataset.
 //
-// The user maintains a CSV of TfL stations with (at minimum) lat/lng and a
-// daily entries+exits figure. The exposure model later joins GPS points to
-// nearby stations using this dataset and the daily footfall as a baseline
-// for impression estimates.
+// V2 (2026-05-17): accepts TfL's official daily tap-count export directly.
+// That format is one row per (Station, TravelDate) with EntryTapCount /
+// ExitTapCount columns and NO coordinates. We:
+//   1. Parse each row
+//   2. Aggregate across dates → mean daily footfall per station
+//   3. Look up lat/lng from a bundled TfL StopPoint JSON (461 stations)
+//   4. Skip stations we can't resolve (logged so the user can investigate)
+//
+// We also still accept the legacy "lat,lng,daily_entries,daily_exits"
+// per-station format for backwards compatibility.
 //
 // Stored as a parsed JSON file at ${DATA_DIR}/tfl-stations.json so we don't
 // have to re-parse the CSV on every report request. Re-upload replaces.
@@ -12,9 +18,56 @@
 
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
 const DATA_DIR = process.env.DATA_DIR ?? "./data";
 const FILE = path.join(DATA_DIR, "tfl-stations.json");
+
+// Bundled lookup: normalized-station-name → { name, lat, lng }. Built once
+// from TfL's public StopPoint API across tube/dlr/overground/elizabeth/tram
+// modes, with a couple of manual overrides for National Rail stations that
+// don't surface in that feed. Lives next to this file so it ships with the
+// server bundle.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+let coordsLookup: Record<string, { name: string; lat: number; lng: number }> | null = null;
+function loadCoordsLookup() {
+  if (coordsLookup !== null) return coordsLookup;
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, "tfl-station-coords.json"), "utf8");
+    coordsLookup = JSON.parse(raw);
+  } catch (err) {
+    console.warn("[tfl-store] coords lookup unreadable, station resolution disabled:", (err as Error).message);
+    coordsLookup = {};
+  }
+  return coordsLookup!;
+}
+
+/**
+ * Normalise a station name so user-typed variants ("Liverpool St NR",
+ * "Liverpool Street", "St James Street", etc.) collide on the same key as
+ * TfL's official commonName ("Liverpool Street Underground Station").
+ * Mirrors the normaliser used when the lookup file was built — keep the two
+ * in sync if you ever rebuild the coords file.
+ */
+function normaliseStationName(name: string): string {
+  let s = String(name ?? "").toLowerCase();
+  s = s.replace(/\([^)]*\)/g, " ");            // strip parens content
+  s = s.replace(/['.]/g, "");                  // delete apostrophes/periods (no space)
+  s = s.replace(/[&\-_/]/g, " ");
+  s = s.replace(/\s+/g, " ").trim();
+  s = s.replace(/\b(underground|rail|dlr|overground|station|stations|elizabeth line|elizabeth|line)\b/g, " ");
+  s = s.replace(/\b(nr|el|lo|sr|met|tfl|hex|c h|d p|ell|dist picc|berks|bucks|b)\b/g, " ");
+  s = s.replace(/\bt(\d+)( (\d+))?/g, (_m, a, _b, c) => c ? `terminal ${a} ${c}` : `terminal ${a}`);
+  s = s.replace(/\bterminals\b/g, "terminal");
+  s = s.replace(/\bw\b/g, "west");
+  s = s.replace(/\be\b/g, "east");
+  s = s.replace(/\bn\b/g, "north");
+  s = s.replace(/\brd\b/g, "road");
+  s = s.replace(/\bst\b/g, "street");
+  s = s.replace(/\s+/g, " ").trim();
+  return s;
+}
 
 export interface TflStation {
   station_name: string;
@@ -29,13 +82,17 @@ export interface TflStation {
 }
 
 export interface TflDatasetMeta {
-  rowCount: number;
+  rowCount: number;             // number of stations resolved to lat/lng
   uploadedAt: string;
   sourceFilename: string;
-  // Range of footfall values in the dataset — quick sanity check on import
+  /** Total rows read from the CSV before dedupe/aggregation (informational). */
+  sourceRowCount?: number;
+  /** Stations that had no coordinate match — surface to the user. */
+  unmatchedStations?: string[];
+  /** Range of footfall values in the dataset — quick sanity check on import */
   minFootfall: number;
   maxFootfall: number;
-  // Bounding box of stations — useful for diagnosing geographic mismatches
+  /** Bounding box of stations — useful for diagnosing geographic mismatches */
   bbox?: { minLat: number; maxLat: number; minLng: number; maxLng: number };
 }
 
@@ -101,7 +158,11 @@ export function hasDataset(): boolean {
   return load().stations.length > 0;
 }
 
-export function replaceDataset(stations: TflStation[], sourceFilename: string): TflDatasetMeta {
+export function replaceDataset(
+  stations: TflStation[],
+  sourceFilename: string,
+  extras: { sourceRowCount?: number; unmatchedStations?: string[] } = {}
+): TflDatasetMeta {
   if (!Array.isArray(stations) || stations.length === 0) {
     throw new Error("Dataset must contain at least one station");
   }
@@ -144,6 +205,8 @@ export function replaceDataset(stations: TflStation[], sourceFilename: string): 
     rowCount: normalised.length,
     uploadedAt: new Date().toISOString(),
     sourceFilename,
+    sourceRowCount: extras.sourceRowCount,
+    unmatchedStations: extras.unmatchedStations,
     minFootfall: minF === Infinity ? 0 : minF,
     maxFootfall: maxF === -Infinity ? 0 : maxF,
     bbox: { minLat, maxLat, minLng, maxLng },
@@ -169,14 +232,18 @@ const HEADER_ALIASES: Record<string, string[]> = {
   station_name: ["station_name", "station", "name", "station name"],
   lat: ["lat", "latitude", "y"],
   lng: ["lng", "lon", "long", "longitude", "x"],
-  daily_entries: ["daily_entries", "entries", "daily entries", "annual_entries"],
-  daily_exits: ["daily_exits", "exits", "daily exits", "annual_exits"],
+  daily_entries: ["daily_entries", "entries", "daily entries", "annual_entries", "entrytapcount"],
+  daily_exits: ["daily_exits", "exits", "daily exits", "annual_exits", "exittapcount"],
   zone: ["zone", "fare_zone", "fare zone"],
 };
 
 export interface ParseResult {
   ok: TflStation[];
   errors: { row: number; reason: string }[];
+  /** Rows we parsed before aggregation/dedupe — useful for "averaged from N rows" messaging. */
+  sourceRowCount?: number;
+  /** Stations the parser saw but couldn't match to coords (only set in tap-count mode). */
+  unmatchedStations?: string[];
 }
 
 export function parseCsv(csv: string): ParseResult {
@@ -198,18 +265,44 @@ export function parseCsv(csv: string): ParseResult {
     columnIndex[key] = headers.findIndex((h) => aliases.includes(h));
   }
 
-  const required: (keyof typeof HEADER_ALIASES)[] = ["station_name", "lat", "lng"];
-  const missing = required.filter((k) => columnIndex[k] === -1);
-  if (missing.length > 0) {
+  // Detect which mode we're in:
+  //   Mode A — legacy per-station with lat/lng baked in
+  //   Mode B — TfL daily-tap-count export: rows like (Station, TravelDate, EntryTapCount, ExitTapCount).
+  //           Resolve coords from the bundled lookup, aggregate to per-station mean.
+  const hasCoords = columnIndex.lat !== -1 && columnIndex.lng !== -1;
+  const hasStationName = columnIndex.station_name !== -1;
+  const hasCountColumns = columnIndex.daily_entries !== -1 || columnIndex.daily_exits !== -1;
+
+  if (!hasStationName) {
     return {
       ok: [],
       errors: [{
         row: 0,
-        reason: `Missing required columns: ${missing.join(", ")}. Got headers: ${headers.join(", ")}.`,
+        reason: `Missing station name column (looked for: ${HEADER_ALIASES.station_name.join(", ")}). Got headers: ${headers.join(", ")}.`,
       }],
     };
   }
 
+  if (hasCoords) {
+    return parseLegacyFormat(lines, columnIndex);
+  }
+  if (hasCountColumns) {
+    return parseTapCountFormat(lines, columnIndex);
+  }
+  return {
+    ok: [],
+    errors: [{
+      row: 0,
+      reason: `Need either lat/lng columns OR entry/exit count columns. Got headers: ${headers.join(", ")}.`,
+    }],
+  };
+}
+
+/** Legacy parser: one row per station, lat/lng provided in the CSV itself. */
+function parseLegacyFormat(
+  lines: string[],
+  columnIndex: Record<keyof typeof HEADER_ALIASES, number>
+): ParseResult {
   const ok: TflStation[] = [];
   const errors: ParseResult["errors"] = [];
 
@@ -240,8 +333,62 @@ export function parseCsv(csv: string): ParseResult {
       errors.push({ row: i + 1, reason: (err as Error).message });
     }
   }
-
   return { ok, errors };
+}
+
+/**
+ * TfL tap-count parser: rows like (TravelDate, Station, EntryTapCount, ExitTapCount).
+ * Aggregates to per-station mean daily totals, then joins to bundled coords.
+ */
+function parseTapCountFormat(
+  lines: string[],
+  columnIndex: Record<keyof typeof HEADER_ALIASES, number>
+): ParseResult {
+  const lookup = loadCoordsLookup();
+  const agg = new Map<string, { name: string; entries: number; exits: number; rows: number }>();
+  const errors: ParseResult["errors"] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = parseRow(lines[i]);
+    const station_name = (row[columnIndex.station_name] ?? "").trim();
+    if (!station_name) {
+      errors.push({ row: i + 1, reason: "station_name empty" });
+      continue;
+    }
+    const entries =
+      columnIndex.daily_entries >= 0
+        ? Math.max(0, Number((row[columnIndex.daily_entries] ?? "0").replace(/,/g, "")) || 0)
+        : 0;
+    const exits =
+      columnIndex.daily_exits >= 0
+        ? Math.max(0, Number((row[columnIndex.daily_exits] ?? "0").replace(/,/g, "")) || 0)
+        : 0;
+    const cur = agg.get(station_name) ?? { name: station_name, entries: 0, exits: 0, rows: 0 };
+    cur.entries += entries;
+    cur.exits += exits;
+    cur.rows += 1;
+    agg.set(station_name, cur);
+  }
+
+  const ok: TflStation[] = [];
+  const unmatched: string[] = [];
+  for (const [name, a] of Array.from(agg)) {
+    const key = normaliseStationName(name);
+    const coords = lookup[key];
+    if (!coords) {
+      unmatched.push(name);
+      continue;
+    }
+    ok.push({
+      station_name: name,
+      lat: coords.lat,
+      lng: coords.lng,
+      daily_entries: Math.round(a.entries / a.rows),
+      daily_exits: Math.round(a.exits / a.rows),
+    });
+  }
+
+  return { ok, errors, sourceRowCount: lines.length - 1, unmatchedStations: unmatched };
 }
 
 /** Parse a single CSV row supporting double-quoted fields with embedded commas. */

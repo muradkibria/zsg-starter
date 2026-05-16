@@ -158,7 +158,20 @@ function TflStatusRow({ loaded }: { loaded: boolean }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadResult, setUploadResult] = useState<{ rowCount: number; droppedRows: number } | null>(null);
+  const [uploadResult, setUploadResult] = useState<
+    | null
+    | {
+        rowCount: number;
+        droppedRows: number;
+        summary?: {
+          format: string;
+          sourceRowCount?: number;
+          stationsResolved: number;
+          stationsUnmatched: number;
+          unmatched?: string[];
+        };
+      }
+  >(null);
 
   const summaryQ = useQuery<TflSummary>({
     queryKey: ["tfl-summary"],
@@ -174,8 +187,22 @@ function TflStatusRow({ loaded }: { loaded: boolean }) {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await api.upload<{ meta: { rowCount: number }; droppedRows: number }>("/tfl/upload", fd);
-      setUploadResult({ rowCount: res.meta.rowCount, droppedRows: res.droppedRows });
+      const res = await api.upload<{
+        meta: { rowCount: number };
+        droppedRows: number;
+        summary?: {
+          format: string;
+          sourceRowCount?: number;
+          stationsResolved: number;
+          stationsUnmatched: number;
+          unmatched?: string[];
+        };
+      }>("/tfl/upload", fd);
+      setUploadResult({
+        rowCount: res.meta.rowCount,
+        droppedRows: res.droppedRows,
+        summary: res.summary,
+      });
       qc.invalidateQueries({ queryKey: ["tfl-summary"] });
       qc.invalidateQueries({ queryKey: ["reports-system-status"] });
     } catch (err) {
@@ -209,10 +236,20 @@ function TflStatusRow({ loaded }: { loaded: boolean }) {
       </div>
 
       {!loaded && (
-        <p className="text-muted-foreground">
-          Upload a CSV with columns: <code>station_name</code>, <code>lat</code>, <code>lng</code>, <code>daily_entries</code>, <code>daily_exits</code>{" "}
-          (optional: <code>zone</code>). Common aliases like "latitude", "longitude", "name" are accepted.
-        </p>
+        <div className="text-muted-foreground space-y-1">
+          <p>Two CSV formats accepted:</p>
+          <ul className="list-disc pl-4 space-y-0.5">
+            <li>
+              <strong>TfL's daily tap-count export</strong> (preferred): columns{" "}
+              <code>TravelDate</code>, <code>Station</code>, <code>EntryTapCount</code>, <code>ExitTapCount</code>.
+              Coordinates are auto-resolved from a bundled TfL station list and counts are averaged across all dates.
+            </li>
+            <li>
+              <strong>Per-station with coordinates</strong>: <code>station_name</code>, <code>lat</code>, <code>lng</code>,{" "}
+              <code>daily_entries</code>, <code>daily_exits</code> (optional <code>zone</code>).
+            </li>
+          </ul>
+        </div>
       )}
 
       <div className="flex items-center gap-2">
@@ -240,12 +277,36 @@ function TflStatusRow({ loaded }: { loaded: boolean }) {
 
       {uploadError && <p className="text-destructive">{uploadError}</p>}
       {uploadResult && (
-        <p className="text-green-700">
-          Imported {uploadResult.rowCount} stations.{" "}
-          {uploadResult.droppedRows > 0 && (
-            <span className="text-amber-700">{uploadResult.droppedRows} rows had parse errors and were skipped.</span>
+        <div className="rounded-md border border-green-200 bg-green-50 p-3 space-y-1.5">
+          <p className="text-green-800 font-medium">
+            ✓ Imported {uploadResult.rowCount} stations.
+          </p>
+          {uploadResult.summary && (
+            <p className="text-xs text-muted-foreground">
+              Format: <code>{uploadResult.summary.format}</code>
+              {uploadResult.summary.sourceRowCount != null && (
+                <> · {uploadResult.summary.sourceRowCount.toLocaleString()} CSV rows aggregated</>
+              )}
+            </p>
           )}
-        </p>
+          {uploadResult.summary && uploadResult.summary.stationsUnmatched > 0 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-amber-700">
+                {uploadResult.summary.stationsUnmatched} station(s) couldn't be matched to coordinates and were skipped
+              </summary>
+              <ul className="list-disc pl-5 mt-1 text-muted-foreground space-y-0.5 max-h-32 overflow-y-auto">
+                {(uploadResult.summary.unmatched ?? []).map((s) => (
+                  <li key={s}>{s}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {uploadResult.droppedRows > 0 && (
+            <p className="text-xs text-amber-700">
+              {uploadResult.droppedRows} CSV row(s) had parse errors and were skipped.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

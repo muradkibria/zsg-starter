@@ -15,10 +15,10 @@ import {
 
 const router = Router();
 
-// 5 MB cap on CSV uploads — TfL's full station list is ~270 rows so plenty
+// 50 MB cap — TfL's daily-tap-count export over a full year is ~200k rows.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 },
 });
 
 // ── Summary (used by Reports UI to know if data exists) ──────────────────────
@@ -39,27 +39,36 @@ router.post("/tfl/upload", upload.single("file"), (req, res) => {
   if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
 
   const csv = req.file.buffer.toString("utf8");
-  const { ok, errors } = parseCsv(csv);
+  const { ok, errors, sourceRowCount, unmatchedStations } = parseCsv(csv);
 
   if (ok.length === 0) {
     res.status(400).json({
       error: "No valid rows parsed from CSV",
       detail: errors.slice(0, 5),
       hint:
-        "Expected columns: station_name, lat, lng (required); daily_entries, daily_exits, zone (optional). " +
-        "Common header aliases accepted (latitude, longitude, name, etc.).",
+        "Accepted formats: (a) per-station rows with station_name, lat, lng, daily_entries, daily_exits OR " +
+        "(b) TfL's daily tap-count export with TravelDate, Station, EntryTapCount, ExitTapCount " +
+        "(coords resolved automatically from the bundled TfL station list).",
     });
     return;
   }
 
   try {
-    const meta = replaceDataset(ok, req.file.originalname);
+    const meta = replaceDataset(ok, req.file.originalname, { sourceRowCount, unmatchedStations });
     res.status(201).json({
       success: true,
       meta,
-      parseErrors: errors.slice(0, 20), // surface up to 20 row errors so user can fix
+      parseErrors: errors.slice(0, 20),
       droppedRows: errors.length,
       sample: ok.slice(0, 5),
+      // Friendly upload summary for the UI
+      summary: {
+        format: sourceRowCount ? "tap-count (aggregated to mean daily per station)" : "per-station",
+        sourceRowCount,
+        stationsResolved: ok.length,
+        stationsUnmatched: unmatchedStations?.length ?? 0,
+        unmatched: unmatchedStations?.slice(0, 20),
+      },
     });
   } catch (err) {
     res.status(500).json({ error: "Save failed", detail: (err as Error).message });
