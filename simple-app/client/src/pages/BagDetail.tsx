@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -53,12 +53,21 @@ interface Rider {
   updated: string;
 }
 
+interface IdleWindow {
+  started_at: string;
+  ended_at: string;
+  duration_seconds: number;
+}
+
 interface Session {
   id: string;
   bag_id: string;
   started_at: string;
   ended_at: string;
   duration_seconds: number;
+  idle_seconds?: number;
+  working_seconds?: number;
+  idle_windows?: IdleWindow[];
   gps_points: number;
 }
 
@@ -66,6 +75,10 @@ interface DayBreakdown {
   date: string;
   total_seconds: number;
   total_hours: number;
+  idle_seconds?: number;
+  idle_hours?: number;
+  working_seconds?: number;
+  working_hours?: number;
   session_count: number;
   sessions: Session[];
 }
@@ -724,21 +737,34 @@ function TimesheetSection({
           </p>
         ) : (
           <>
-            {/* Summary */}
-            <div className="grid grid-cols-3 gap-3">
-              <div className="border rounded-md p-3 text-center">
-                <p className="text-2xl font-bold">{data.totalHours.toFixed(1)}h</p>
-                <p className="text-xs text-muted-foreground">Total online</p>
-              </div>
-              <div className="border rounded-md p-3 text-center">
-                <p className="text-2xl font-bold">{data.totalSessions}</p>
-                <p className="text-xs text-muted-foreground">Sessions</p>
-              </div>
-              <div className="border rounded-md p-3 text-center">
-                <p className="text-2xl font-bold">{data.byDay.length}</p>
-                <p className="text-xs text-muted-foreground">Active days</p>
-              </div>
-            </div>
+            {/* Summary — raw / working / idle so payroll has the breakdown at a glance */}
+            {(() => {
+              const totalSec = data.byDay.reduce((s, d) => s + (d.total_seconds ?? 0), 0);
+              const idleSec  = data.byDay.reduce((s, d) => s + (d.idle_seconds ?? 0), 0);
+              const workSec  = Math.max(0, totalSec - idleSec);
+              return (
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="border rounded-md p-3 text-center">
+                    <p className="text-2xl font-bold">{data.totalHours.toFixed(1)}h</p>
+                    <p className="text-xs text-muted-foreground">Total online</p>
+                  </div>
+                  <div className="border rounded-md p-3 text-center">
+                    <p className="text-2xl font-bold">{(workSec / 3600).toFixed(1)}h</p>
+                    <p className="text-xs text-muted-foreground">Working</p>
+                  </div>
+                  <div className={`border rounded-md p-3 text-center ${idleSec > 0 ? "border-amber-300 bg-amber-50/60" : ""}`}>
+                    <p className={`text-2xl font-bold ${idleSec > 0 ? "text-amber-700" : ""}`}>
+                      {(idleSec / 3600).toFixed(1)}h
+                    </p>
+                    <p className="text-xs text-muted-foreground">Idle</p>
+                  </div>
+                  <div className="border rounded-md p-3 text-center">
+                    <p className="text-2xl font-bold">{data.byDay.length}</p>
+                    <p className="text-xs text-muted-foreground">Active days</p>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Per-day breakdown */}
             <div className="space-y-2">
@@ -759,6 +785,8 @@ function DayRow({ day }: { day: DayBreakdown }) {
   const dayLabel = date.toLocaleDateString(undefined, {
     weekday: "short", day: "numeric", month: "short",
   });
+  const idleSec = day.idle_seconds ?? 0;
+  const workingSec = day.working_seconds ?? Math.max(0, day.total_seconds - idleSec);
 
   return (
     <div className="border rounded-md overflow-hidden">
@@ -772,9 +800,15 @@ function DayRow({ day }: { day: DayBreakdown }) {
             {day.session_count} session{day.session_count !== 1 ? "s" : ""}
           </span>
         </div>
-        <span className="font-mono font-semibold tabular-nums">
-          {formatHours(day.total_seconds)}
-        </span>
+        <div className="flex items-center gap-3 font-mono tabular-nums">
+          <span className="font-semibold">{formatHours(day.total_seconds)}</span>
+          <span className="text-xs text-muted-foreground">
+            {formatHours(workingSec)} work
+            {idleSec > 0 && (
+              <> · <span className="text-amber-700">{formatHours(idleSec)} idle</span></>
+            )}
+          </span>
+        </div>
       </button>
 
       {open && (
@@ -786,12 +820,14 @@ function DayRow({ day }: { day: DayBreakdown }) {
                 <th className="text-left px-3 py-1.5 font-medium">Started</th>
                 <th className="text-left px-3 py-1.5 font-medium">Ended</th>
                 <th className="text-right px-3 py-1.5 font-medium">Duration</th>
+                <th className="text-right px-3 py-1.5 font-medium">Idle</th>
                 <th className="text-right px-3 py-1.5 font-medium">GPS pts</th>
               </tr>
             </thead>
             <tbody>
               {day.sessions.map((s, i) => (
-                <tr key={s.id} className="border-t">
+                <Fragment key={s.id}>
+                <tr className="border-t">
                   <td className="px-3 py-1.5">#{i + 1}</td>
                   <td className="px-3 py-1.5 font-mono">
                     {new Date(s.started_at).toLocaleTimeString()}
@@ -802,10 +838,30 @@ function DayRow({ day }: { day: DayBreakdown }) {
                   <td className="px-3 py-1.5 text-right tabular-nums">
                     {formatHours(s.duration_seconds)}
                   </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-amber-700">
+                    {(s.idle_seconds ?? 0) > 0 ? formatHours(s.idle_seconds!) : ""}
+                  </td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
                     {s.gps_points}
                   </td>
                 </tr>
+                {(s.idle_windows ?? []).map((w, wi) => (
+                  <tr key={`${s.id}-w${wi}`} className="bg-amber-50/50">
+                    <td className="px-3 py-1 text-amber-700/80 text-[10px] pl-6">↳ idle</td>
+                    <td className="px-3 py-1 font-mono text-amber-800 text-[11px]">
+                      {new Date(w.started_at).toLocaleTimeString()}
+                    </td>
+                    <td className="px-3 py-1 font-mono text-amber-800 text-[11px]">
+                      {new Date(w.ended_at).toLocaleTimeString()}
+                    </td>
+                    <td className="px-3 py-1"></td>
+                    <td className="px-3 py-1 text-right tabular-nums text-amber-700 text-[11px]">
+                      {formatHours(w.duration_seconds)}
+                    </td>
+                    <td className="px-3 py-1"></td>
+                  </tr>
+                ))}
+                </Fragment>
               ))}
             </tbody>
           </table>

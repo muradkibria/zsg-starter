@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -24,6 +24,12 @@ interface Rider {
   status: string;
 }
 
+interface IdleWindow {
+  started_at: string;
+  ended_at: string;
+  duration_seconds: number;
+}
+
 interface Session {
   id: string;
   bag_id: string;
@@ -33,6 +39,7 @@ interface Session {
   /** Time the rider was stationary (within IDLE_RADIUS_M for ≥ IDLE_THRESHOLD_MINUTES). */
   idle_seconds?: number;
   working_seconds?: number;
+  idle_windows?: IdleWindow[];
   gps_points: number;
 }
 
@@ -539,23 +546,42 @@ function DayCard({ day }: { day: DayBreakdown }) {
         <tbody>
           {day.sessions.map((s, i) => {
             const sIdle = s.idle_seconds ?? 0;
+            const windows = s.idle_windows ?? [];
             return (
-              <tr key={s.id} className="border-t">
-                <td className="px-3 py-1.5 text-muted-foreground w-8">#{i + 1}</td>
-                <td className="px-3 py-1.5 font-mono">
-                  {new Date(s.started_at).toLocaleTimeString()}
-                </td>
-                <td className="px-3 py-1.5 text-muted-foreground">→</td>
-                <td className="px-3 py-1.5 font-mono">
-                  {new Date(s.ended_at).toLocaleTimeString()}
-                </td>
-                <td className="px-3 py-1.5 text-right tabular-nums w-20">
-                  {formatHours(s.duration_seconds)}
-                </td>
-                <td className="px-3 py-1.5 text-right tabular-nums w-24 text-amber-700">
-                  {sIdle > 0 ? `${formatHours(sIdle)} idle` : ""}
-                </td>
-              </tr>
+              <Fragment key={s.id}>
+                <tr className="border-t">
+                  <td className="px-3 py-1.5 text-muted-foreground w-8">#{i + 1}</td>
+                  <td className="px-3 py-1.5 font-mono">
+                    {new Date(s.started_at).toLocaleTimeString()}
+                  </td>
+                  <td className="px-3 py-1.5 text-muted-foreground">→</td>
+                  <td className="px-3 py-1.5 font-mono">
+                    {new Date(s.ended_at).toLocaleTimeString()}
+                  </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums w-20">
+                    {formatHours(s.duration_seconds)}
+                  </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums w-24 text-amber-700">
+                    {sIdle > 0 ? `${formatHours(sIdle)} idle` : ""}
+                  </td>
+                </tr>
+                {windows.map((w, wi) => (
+                  <tr key={`${s.id}-w${wi}`} className="bg-amber-50/40">
+                    <td className="px-3 py-1 text-amber-700/80 text-[10px] pl-6">↳ idle</td>
+                    <td className="px-3 py-1 font-mono text-amber-800 text-[11px]">
+                      {new Date(w.started_at).toLocaleTimeString()}
+                    </td>
+                    <td className="px-3 py-1 text-amber-700/80">→</td>
+                    <td className="px-3 py-1 font-mono text-amber-800 text-[11px]">
+                      {new Date(w.ended_at).toLocaleTimeString()}
+                    </td>
+                    <td className="px-3 py-1"></td>
+                    <td className="px-3 py-1 text-right tabular-nums text-amber-700 text-[11px]">
+                      {formatHours(w.duration_seconds)}
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
             );
           })}
         </tbody>

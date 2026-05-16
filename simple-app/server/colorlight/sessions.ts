@@ -10,6 +10,13 @@
 import { getTrack, type ColorlightTrackPoint } from "./client.js";
 import { haversineMeters } from "../reports/exposure.js";
 
+/** A single stationary window within a session — bag was on but rider didn't move. */
+export interface IdleWindow {
+  started_at: string;        // ISO UTC
+  ended_at: string;          // ISO UTC
+  duration_seconds: number;
+}
+
 export interface RiderSession {
   id: string;
   bag_id: string;
@@ -20,6 +27,8 @@ export interface RiderSession {
   idle_seconds: number;
   /** duration_seconds − idle_seconds. */
   working_seconds: number;
+  /** Each individual stationary window that contributed to idle_seconds. */
+  idle_windows: IdleWindow[];
   gps_points: number;
 }
 
@@ -50,7 +59,7 @@ const IDLE_THRESHOLD_MS = IDLE_THRESHOLD_MINUTES * 60 * 1000;
 
 // Bump this whenever the shape of the cached payload changes so stale entries
 // from old deploys don't poison the response.
-const CACHE_VERSION = "idle_v1";
+const CACHE_VERSION = "idle_v2";
 
 // ── Sessions for a single bag, over the last N days ──────────────────────────
 
@@ -230,7 +239,7 @@ function buildSession(bagId: string, points: ColorlightTrackPoint[]): RiderSessi
     0,
     Math.round((new Date(end).getTime() - new Date(start).getTime()) / 1000)
   );
-  const idle_seconds = computeIdleSeconds(points);
+  const { idle_seconds, idle_windows } = computeIdleData(points);
   const working_seconds = Math.max(0, seconds - idle_seconds);
   return {
     id: `ses_${bagId}_${start}`,
@@ -240,36 +249,51 @@ function buildSession(bagId: string, points: ColorlightTrackPoint[]): RiderSessi
     duration_seconds: seconds,
     idle_seconds,
     working_seconds,
+    idle_windows,
     gps_points: points.length,
   };
 }
 
 /**
  * Sliding-window scan over an ordered list of GPS points. Returns total
- * seconds of "stationary" time — windows where the rider stayed within
- * IDLE_RADIUS_M of an anchor for ≥ IDLE_THRESHOLD_MS continuously.
+ * stationary seconds plus the individual windows that produced it — windows
+ * where the rider stayed within IDLE_RADIUS_M of an anchor for at least
+ * IDLE_THRESHOLD_MS continuously.
  *
  * Algorithm: maintain a single anchor (first point of current window). For
  * each subsequent point, if it's within radius of the anchor, extend the
  * window. If it breaks out, close the window — if it lasted long enough,
- * count its duration toward idle. Then the breaking point becomes the new
- * anchor and a new window begins.
+ * record it. Then the breaking point becomes the new anchor.
  */
-export function computeIdleSeconds(points: ColorlightTrackPoint[]): number {
-  if (points.length < 2) return 0;
+export function computeIdleData(points: ColorlightTrackPoint[]): {
+  idle_seconds: number;
+  idle_windows: IdleWindow[];
+} {
+  if (points.length < 2) return { idle_seconds: 0, idle_windows: [] };
+
+  const windows: IdleWindow[] = [];
   let idleMs = 0;
   let anchor = points[0];
   let anchorStartMs = new Date(asUtc(anchor.serverTime)).getTime();
   let windowEndMs = anchorStartMs;
+  let windowEndIso = asUtc(anchor.serverTime);
 
   const closeWindow = () => {
     const dur = windowEndMs - anchorStartMs;
-    if (dur >= IDLE_THRESHOLD_MS) idleMs += dur;
+    if (dur >= IDLE_THRESHOLD_MS) {
+      idleMs += dur;
+      windows.push({
+        started_at: asUtc(anchor.serverTime),
+        ended_at: windowEndIso,
+        duration_seconds: Math.round(dur / 1000),
+      });
+    }
   };
 
   for (let i = 1; i < points.length; i++) {
     const p = points[i];
-    const pMs = new Date(asUtc(p.serverTime)).getTime();
+    const pIso = asUtc(p.serverTime);
+    const pMs = new Date(pIso).getTime();
     const dist = haversineMeters(
       anchor.latitude, anchor.longitude,
       p.latitude, p.longitude
@@ -277,17 +301,24 @@ export function computeIdleSeconds(points: ColorlightTrackPoint[]): number {
     if (dist <= IDLE_RADIUS_M) {
       // still within the stationary radius — extend the window
       windowEndMs = pMs;
+      windowEndIso = pIso;
     } else {
       // broke out — close the current window, start a new anchor here
       closeWindow();
       anchor = p;
       anchorStartMs = pMs;
       windowEndMs = pMs;
+      windowEndIso = pIso;
     }
   }
   // Handle the final unclosed window
   closeWindow();
-  return Math.round(idleMs / 1000);
+  return { idle_seconds: Math.round(idleMs / 1000), idle_windows: windows };
+}
+
+/** Legacy name kept for tests/callers that just want the total. */
+export function computeIdleSeconds(points: ColorlightTrackPoint[]): number {
+  return computeIdleData(points).idle_seconds;
 }
 
 // ── Aggregate by day ─────────────────────────────────────────────────────────
