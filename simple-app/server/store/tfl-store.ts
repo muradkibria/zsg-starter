@@ -18,29 +18,20 @@
 
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+// Bundled lookup: normalized-station-name → { name, lat, lng }. Built once
+// from TfL's public StopPoint API across tube/dlr/overground/elizabeth/tram
+// modes, with a manual override for Kensington Olympia (National Rail not in
+// that feed). Imported as JSON so esbuild inlines it into the server bundle
+// — that way it works in dev (tsx) AND in production (esbuild → dist/index.js)
+// without needing a separate copy step.
+import tflStationCoords from "./tfl-station-coords.json" with { type: "json" };
 
 const DATA_DIR = process.env.DATA_DIR ?? "./data";
 const FILE = path.join(DATA_DIR, "tfl-stations.json");
 
-// Bundled lookup: normalized-station-name → { name, lat, lng }. Built once
-// from TfL's public StopPoint API across tube/dlr/overground/elizabeth/tram
-// modes, with a couple of manual overrides for National Rail stations that
-// don't surface in that feed. Lives next to this file so it ships with the
-// server bundle.
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-let coordsLookup: Record<string, { name: string; lat: number; lng: number }> | null = null;
+const coordsLookup = tflStationCoords as Record<string, { name: string; lat: number; lng: number }>;
 function loadCoordsLookup() {
-  if (coordsLookup !== null) return coordsLookup;
-  try {
-    const raw = fs.readFileSync(path.join(__dirname, "tfl-station-coords.json"), "utf8");
-    coordsLookup = JSON.parse(raw);
-  } catch (err) {
-    console.warn("[tfl-store] coords lookup unreadable, station resolution disabled:", (err as Error).message);
-    coordsLookup = {};
-  }
-  return coordsLookup!;
+  return coordsLookup;
 }
 
 /**
