@@ -358,6 +358,10 @@ export function LiveMap({ bags, mode, showZones = true, selectedBagIds, timeRang
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        // Applies a CSS filter that nudges the raw OSM palette toward the
+        // softer, cooler Google-Maps look (less saturated yellows, slightly
+        // bluer roads, lifted brightness). Filter rule lives in index.css.
+        className="map-tiles-google-mimic"
       />
       <LocateMe />
       {(mode === "live" || mode === "route") && (

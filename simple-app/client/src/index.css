@@ -353,3 +353,17 @@
     inset: -1px;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Map tile retheme — make raw OpenStreetMap tiles read closer to the soft
+ * pastel palette Google Maps uses. We tint by:
+ *   - desaturating the loud OSM yellows / greens (saturate 0.78)
+ *   - lifting brightness slightly so labels feel airier (brightness 1.05)
+ *   - nudging the hue a touch toward cooler/bluer tones (hue-rotate -8deg)
+ *   - softening contrast so labels don't fight the roads (contrast 0.93)
+ * The combined filter only applies to the tile images, not markers / labels
+ * / overlays drawn by Leaflet on top.
+ * ──────────────────────────────────────────────────────────────────────── */
+.leaflet-tile-pane .map-tiles-google-mimic {
+  filter: saturate(0.78) brightness(1.05) hue-rotate(-8deg) contrast(0.93);
+}
