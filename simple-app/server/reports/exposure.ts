@@ -2,14 +2,30 @@
 // Time-weighted exposure model
 //
 // Given a bag's GPS track and the TfL station dataset, estimate how many
-// impressions the bag's screen accumulated:
+// impressions the bag's screen accumulated. There are TWO contributing sources
+// per ping:
 //
-//   impressions = Σ (station_footfall_per_second × dwell_seconds × time_weight × visibility_factor)
-//                   for every (GPS point × station within 250m) pair
+//   (a) Station catchment — when the bag is within RADIUS_M of a TfL station,
+//       a share of that station's daily footfall flows past the bag:
+//
+//         impressions = Σ (footfall_per_sec × dwell_sec × time_weight × visibility)
+//
+//       where footfall_per_sec = daily_footfall / STATION_ACTIVE_SECONDS_PER_DAY
+//       (note: divides by ~16h of active station hours, NOT 24h — see constant).
+//
+//   (b) Street pedestrians — every active ping, anywhere on London streets,
+//       gets a baseline of non-station pedestrian flow:
+//
+//         impressions = (STREET_FOOTFALL_PER_HOUR / 3600) × dwell_sec
+//                       × time_weight × visibility
+//
+//       This represents people on high streets / retail / food-delivery
+//       corridors / residential routes who never tap into a TfL station but
+//       still see the screen.
 //
 // "Conservative" by design — visibility_factor (the fraction of people within
-// 250m who could plausibly notice an LED-equipped courier bag) is held at
-// 0.10. Tunable as we learn more.
+// 250 m who could plausibly notice an LED-equipped courier bag) is 0.10.
+// Tunable as we learn more.
 //
 // Time weights bias rush hours up and nights down (London local time, BST/GMT
 // handled automatically via Intl.DateTimeFormat).
@@ -35,7 +51,31 @@ export interface ExposureStation {
 export const RADIUS_M = 250;
 export const MAX_DWELL_SECONDS = 60;
 export const VISIBILITY_FACTOR = 0.10;
-const SECONDS_PER_DAY = 86400;
+
+/**
+ * TfL stations are practically active ~05:00–01:00. Modelling station
+ * footfall as concentrated in 16 h (rather than spread evenly across 24 h)
+ * matches the real flow much better — the time-band weights handle hour-to-
+ * hour variance on top of this baseline.
+ *
+ * Tunable via STATION_ACTIVE_HOURS env (default 16).
+ */
+export const STATION_ACTIVE_HOURS = Number(process.env.STATION_ACTIVE_HOURS ?? 16);
+const STATION_ACTIVE_SECONDS_PER_DAY = STATION_ACTIVE_HOURS * 3600;
+
+/**
+ * Street-level pedestrian flow rate (people-passing-the-bag per hour of
+ * operation, BEFORE visibility/time-weight). Applies to every active GPS
+ * ping regardless of station proximity — accounts for high-street footfall,
+ * retail corridors, food-delivery hotspots etc. that the TfL feed misses.
+ *
+ * Default 5,000/hr is conservative for inner London: a bag parked at
+ * Camden Market on a Saturday could see 10,000+; a quiet residential
+ * delivery route might see 500. Tune per-deployment via STREET_FOOTFALL_PER_HOUR.
+ *
+ * Set to 0 to fall back to the strict TfL-only model.
+ */
+export const STREET_FOOTFALL_PER_HOUR = Number(process.env.STREET_FOOTFALL_PER_HOUR ?? 5000);
 
 export interface TimeBand {
   name: string;
@@ -162,6 +202,30 @@ export function computeBagExposure(
     const tw = timeWeightFor(new Date(tMs));
     totalExposureSeconds += exposureSec;
 
+    // ── (b) Street pedestrian baseline — applies to EVERY active ping ──
+    // No specific station attribution; lands in a synthetic "Street pedestrians"
+    // bucket so the zone breakdown still adds to the total. Skipped if
+    // STREET_FOOTFALL_PER_HOUR is 0 (strict TfL-only mode).
+    if (STREET_FOOTFALL_PER_HOUR > 0) {
+      const streetImpressions =
+        (STREET_FOOTFALL_PER_HOUR / 3600) * exposureSec * tw.weight * VISIBILITY_FACTOR;
+      if (streetImpressions > 0) {
+        totalImpressions += streetImpressions;
+
+        const streetZone = "Street pedestrians";
+        const z = byZone[streetZone] ?? { impressions: 0, visits: 0 };
+        z.impressions += streetImpressions;
+        z.visits++;
+        byZone[streetZone] = z;
+
+        const tb = byTimeBand[tw.band] ?? { impressions: 0, seconds: 0 };
+        tb.impressions += streetImpressions;
+        tb.seconds += exposureSec;
+        byTimeBand[tw.band] = tb;
+      }
+    }
+
+    // ── (a) Station catchment — fires only when within RADIUS_M of a station ──
     // Bounding-box prefilter (much faster than haversine for the ~99% of stations
     // that are nowhere near a given point).
     const latDelta = RADIUS_M / 111000;
@@ -173,7 +237,10 @@ export function computeBagExposure(
       const d = haversineMeters(p.lat, p.lng, s.lat, s.lng);
       if (d > RADIUS_M) continue;
 
-      const footfallPerSec = (s.daily_footfall || 0) / SECONDS_PER_DAY;
+      // Divide by STATION_ACTIVE_SECONDS_PER_DAY (16 h × 3600 s, default) rather
+      // than 24 h so the daily total concentrates in the hours stations are
+      // actually open — much closer to real flow patterns.
+      const footfallPerSec = (s.daily_footfall || 0) / STATION_ACTIVE_SECONDS_PER_DAY;
       const impressions = footfallPerSec * exposureSec * tw.weight * VISIBILITY_FACTOR;
       if (impressions <= 0) continue;
 

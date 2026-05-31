@@ -32,6 +32,8 @@ import {
   RADIUS_M,
   MAX_DWELL_SECONDS,
   VISIBILITY_FACTOR,
+  STATION_ACTIVE_HOURS,
+  STREET_FOOTFALL_PER_HOUR,
   type TrackPoint,
   type ExposureStation,
 } from "./exposure.js";
@@ -93,6 +95,8 @@ export interface PreviewOutput {
     radius_m: number;
     max_dwell_seconds: number;
     visibility_factor: number;
+    station_active_hours: number;
+    street_footfall_per_hour: number;
     time_bands: typeof TIME_BANDS;
     notes: string[];
   };
@@ -383,8 +387,10 @@ export async function buildReportPreview(input: PreviewInput): Promise<PreviewOu
 
   // ── 7. Methodology notes (helpful for the UI + the LLM) ───────────────────
   const notes: string[] = [
-    `Impressions are estimated as: footfall_per_second × dwell_seconds × time_band_weight × visibility_factor (${VISIBILITY_FACTOR}), summed over every GPS point × TfL station within ${RADIUS_M}m.`,
-    `Per-point dwell is capped at ${MAX_DWELL_SECONDS}s to avoid over-weighting parked bags.`,
+    `Two impression sources are summed per GPS ping:`,
+    `  (a) Station catchment — for each TfL station within ${RADIUS_M} m of the ping: footfall_per_sec × dwell_sec × time_weight × visibility (${VISIBILITY_FACTOR}). Daily station footfall is spread over ${STATION_ACTIVE_HOURS} h of active station hours (not 24 h), giving footfall_per_sec = daily_footfall ÷ ${STATION_ACTIVE_HOURS * 3600}.`,
+    `  (b) Street pedestrians — every active ping gets a baseline of ${STREET_FOOTFALL_PER_HOUR.toLocaleString()} people/hour × dwell_sec ÷ 3600 × time_weight × visibility, regardless of station proximity. Accounts for non-tap pedestrian flow on high streets, retail corridors, food-delivery hotspots. (Set STREET_FOOTFALL_PER_HOUR=0 to disable.)`,
+    `Per-point dwell is capped at ${MAX_DWELL_SECONDS} s to avoid over-weighting parked bags.`,
     `Per-ad impressions are this bag's total exposure × (this ad's share of all airtime on the bag).`,
     `Time bands use Europe/London local time (handles BST/GMT automatically).`,
     `Only bags that played at least one of the selected ads are included.`,
@@ -418,6 +424,8 @@ export async function buildReportPreview(input: PreviewInput): Promise<PreviewOu
       radius_m: RADIUS_M,
       max_dwell_seconds: MAX_DWELL_SECONDS,
       visibility_factor: VISIBILITY_FACTOR,
+      station_active_hours: STATION_ACTIVE_HOURS,
+      street_footfall_per_hour: STREET_FOOTFALL_PER_HOUR,
       time_bands: TIME_BANDS,
       notes,
     },
