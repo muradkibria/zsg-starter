@@ -25,6 +25,7 @@ export interface Campaign {
   start_date: string | null;       // YYYY-MM-DD
   end_date: string | null;         // YYYY-MM-DD
   contracted_bags: number;         // bags the client paid for (= slots sold)
+  bag_ids: string[];               // which bags are actually assigned to this campaign
   notes: string;
   created: string;
   updated: string;
@@ -40,7 +41,9 @@ function load(): Campaign[] {
       cache = [];
       return cache;
     }
-    cache = JSON.parse(fs.readFileSync(FILE, "utf8")) as Campaign[];
+    const parsed = JSON.parse(fs.readFileSync(FILE, "utf8")) as Campaign[];
+    // Backfill bag_ids for rows written before this field existed.
+    cache = parsed.map((c) => ({ ...c, bag_ids: Array.isArray(c.bag_ids) ? c.bag_ids : [] }));
     return cache;
   } catch (err) {
     console.warn("[campaign-store] load failed, starting empty:", (err as Error).message);
@@ -81,7 +84,14 @@ export interface CreateCampaignInput {
   start_date?: string | null;
   end_date?: string | null;
   contracted_bags?: number;
+  bag_ids?: string[];
   notes?: string;
+}
+
+/** Dedupe + coerce to a clean string[], dropping empty/non-string entries. */
+function sanitiseBagIds(ids: unknown): string[] {
+  if (!Array.isArray(ids)) return [];
+  return Array.from(new Set(ids.map((v) => String(v).trim()).filter(Boolean)));
 }
 
 export function createCampaign(input: CreateCampaignInput): Campaign {
@@ -95,6 +105,7 @@ export function createCampaign(input: CreateCampaignInput): Campaign {
     start_date: normaliseDate(input.start_date),
     end_date: normaliseDate(input.end_date),
     contracted_bags: Math.max(0, Math.floor(Number(input.contracted_bags ?? 0))),
+    bag_ids: sanitiseBagIds(input.bag_ids),
     notes: input.notes ?? "",
     created: now,
     updated: now,
@@ -118,6 +129,7 @@ export function updateCampaign(id: string, updates: UpdateCampaignInput): Campai
       updates.contracted_bags !== undefined
         ? Math.max(0, Math.floor(Number(updates.contracted_bags)))
         : existing.contracted_bags,
+    bag_ids: updates.bag_ids !== undefined ? sanitiseBagIds(updates.bag_ids) : existing.bag_ids,
     start_date:
       updates.start_date !== undefined ? normaliseDate(updates.start_date) : existing.start_date,
     end_date:
