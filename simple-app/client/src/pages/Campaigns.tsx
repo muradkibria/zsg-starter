@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useLiveBags } from "@/hooks/use-live-bags";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ interface Campaign {
   start_date: string | null;
   end_date: string | null;
   contracted_bags: number;
+  bag_ids: string[];
   notes: string;
   created: string;
   updated: string;
@@ -196,7 +198,12 @@ function CampaignsTab() {
                 <TableRow key={c.id}>
                   <TableCell className="font-medium">{c.client_name}</TableCell>
                   <TableCell>{c.campaign_name}</TableCell>
-                  <TableCell className="text-right tabular-nums">{c.contracted_bags}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {c.contracted_bags}
+                    <span className="text-muted-foreground text-xs ml-1">
+                      ({(c.bag_ids ?? []).length} assigned)
+                    </span>
+                  </TableCell>
                   <TableCell><StatusBadge status={c.status} /></TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {formatDate(c.start_date)} – {formatDate(c.end_date)}
@@ -259,8 +266,11 @@ function CampaignEditor({
     start_date: initial?.start_date ?? "",
     end_date: initial?.end_date ?? "",
     contracted_bags: initial?.contracted_bags ?? 0,
+    bag_ids: new Set<string>(initial?.bag_ids ?? []),
     notes: initial?.notes ?? "",
   });
+
+  const { bags: allBags } = useLiveBags();
 
   const save = useMutation({
     mutationFn: () => {
@@ -271,6 +281,7 @@ function CampaignEditor({
         start_date: form.start_date || null,
         end_date: form.end_date || null,
         contracted_bags: Number(form.contracted_bags),
+        bag_ids: Array.from(form.bag_ids),
         notes: form.notes,
       };
       return isEdit
@@ -354,6 +365,45 @@ function CampaignEditor({
                 onChange={(e) => setForm((f) => ({ ...f, end_date: e.target.value }))}
               />
             </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">
+              Bags assigned to this campaign ({form.bag_ids.size} selected)
+            </label>
+            <div className="border rounded-md max-h-40 overflow-y-auto">
+              {allBags.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">No bags found</p>
+              ) : (
+                allBags.map((b) => {
+                  const checked = form.bag_ids.has(b.id);
+                  return (
+                    <label
+                      key={b.id}
+                      className={`flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-accent border-b last:border-b-0 ${checked ? "bg-accent/50" : ""}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setForm((f) => {
+                            const next = new Set(f.bag_ids);
+                            if (next.has(b.id)) next.delete(b.id);
+                            else next.add(b.id);
+                            return { ...f, bag_ids: next };
+                          })
+                        }
+                        className="h-3.5 w-3.5"
+                      />
+                      <span className="flex-1 truncate">{b.name}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Used for campaign timesheets and route screenshots — separate from the "Bags contracted" count above.
+            </p>
           </div>
 
           <div>

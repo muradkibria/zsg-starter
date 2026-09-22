@@ -378,3 +378,40 @@ export function sessionsToCsv(rider: { id: string; name: string }, sessions: Rid
   }
   return lines.join("\n") + "\n";
 }
+
+/** Flattened multi-rider CSV for a whole campaign — one row per session across every rider/bag. */
+export function campaignSessionsToCsv(
+  campaign: { id: string; campaign_name: string; client_name: string },
+  rows: { rider_id: string | null; rider_name: string; bag_id: string; sessions: RiderSession[] }[]
+): string {
+  const esc = (s: string) => `"${s.replace(/"/g, '""')}"`;
+  const lines: string[] = [];
+  lines.push(
+    "campaign_id,campaign_name,client_name,rider_id,rider_name,bag_id,session_id,started_at,ended_at,duration_minutes,working_minutes,idle_minutes,gps_points"
+  );
+  for (const row of rows) {
+    for (const s of row.sessions) {
+      const minutes = (s.duration_seconds / 60).toFixed(1);
+      const working = ((s.working_seconds ?? s.duration_seconds) / 60).toFixed(1);
+      const idle = ((s.idle_seconds ?? 0) / 60).toFixed(1);
+      lines.push(
+        [
+          campaign.id,
+          esc(campaign.campaign_name),
+          esc(campaign.client_name),
+          row.rider_id ?? "",
+          esc(row.rider_name),
+          row.bag_id,
+          s.id,
+          s.started_at,
+          s.ended_at,
+          minutes,
+          working,
+          idle,
+          String(s.gps_points),
+        ].join(",")
+      );
+    }
+  }
+  return lines.join("\n") + "\n";
+}

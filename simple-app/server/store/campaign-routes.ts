@@ -60,6 +60,7 @@ router.post("/campaigns", (req, res) => {
     start_date: body.start_date ?? null,
     end_date: body.end_date ?? null,
     contracted_bags: contracted,
+    bag_ids: Array.isArray(body.bag_ids) ? body.bag_ids : [],
     notes: typeof body.notes === "string" ? body.notes : "",
   });
   res.status(201).json(created);
@@ -97,6 +98,10 @@ router.put("/campaigns/:id", (req, res) => {
       return;
     }
     updates.contracted_bags = n;
+  }
+  if (body.bag_ids !== undefined) {
+    if (!Array.isArray(body.bag_ids)) { res.status(400).json({ error: "bag_ids must be an array" }); return; }
+    updates.bag_ids = body.bag_ids;
   }
   if (body.notes !== undefined) updates.notes = String(body.notes ?? "");
 

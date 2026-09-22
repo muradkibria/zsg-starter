@@ -12,6 +12,7 @@ import { Zones } from "@/pages/Zones";
 import { Reports } from "@/pages/Reports";
 import { Audit } from "@/pages/Audit";
 import { BrightnessSchedule } from "@/pages/BrightnessSchedule";
+import { RouteSnapshotView } from "@/pages/RouteSnapshotView";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
@@ -22,6 +23,8 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
+          {/* No AppLayout chrome — this is a headless-browser screenshot target, not a user-facing page. */}
+          <Route path="/snapshot/bag/:bagId/day/:date" element={<RouteSnapshotView />} />
           <Route element={<AppLayout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/fleet" element={<Fleet />} />

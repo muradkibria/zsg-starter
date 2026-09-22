@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +14,7 @@ import { BagFilter, applyBagFilter } from "@/components/map/BagFilter";
 import { useLiveBags } from "@/hooks/use-live-bags";
 import {
   Sparkles, Upload, FileText, Trash2, Loader2, ChevronRight, ChevronDown,
-  Film, Image as ImageIcon, X, AlertCircle, Download, BarChart2,
+  Film, Image as ImageIcon, X, AlertCircle, Download, BarChart2, Clock, Camera,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -110,8 +111,144 @@ export function CampaignReportsTab() {
     <div className="space-y-4">
       <SystemStatusBar status={statusQ.data} loading={statusQ.isLoading} />
       <GenerateForm canGenerate={!!statusQ.data?.canGenerate} onViewReport={setViewing} />
+      <CampaignTimesheetPanel />
+      <RouteScreenshotsPanel />
       <SavedReportsList onView={setViewing} />
     </div>
+  );
+}
+
+// ── Campaign timesheet panel ─────────────────────────────────────────────────
+// Downloads the existing GPS-session-derived rider hours (sessions.ts), scoped
+// to a single campaign's bags and date range, in one combined view/export
+// instead of pulling each rider individually.
+
+interface CampaignTimesheetRow {
+  rider_id: string | null;
+  rider_name: string;
+  bag_id: string;
+  bag_name: string;
+  totalHours: number;
+  workingHours: number;
+  idleHours: number;
+}
+
+interface CampaignTimesheetResponse {
+  campaign_id: string;
+  client_name: string;
+  campaign_name: string;
+  startTime: string;
+  endTime: string;
+  bag_ids: string[];
+  riders: CampaignTimesheetRow[];
+  totals: { totalHours: number; workingHours: number; idleHours: number; riderCount: number; bagCount: number };
+  warnings: string[];
+}
+
+function CampaignTimesheetPanel() {
+  const [campaignId, setCampaignId] = useState<string>("");
+
+  const campaignsQ = useQuery<Campaign[]>({
+    queryKey: ["campaigns"],
+    queryFn: () => api.get("/campaigns"),
+  });
+
+  const timesheetQ = useQuery<CampaignTimesheetResponse>({
+    queryKey: ["campaign-timesheet", campaignId],
+    queryFn: () => api.get(`/campaigns/${campaignId}/timesheet`),
+    enabled: !!campaignId,
+  });
+
+  const downloadCsv = () => {
+    window.location.href = `/api/campaigns/${campaignId}/timesheet/export`;
+  };
+
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-sm font-semibold">Campaign timesheet</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={campaignId || "_none"} onValueChange={(v) => setCampaignId(v === "_none" ? "" : v)}>
+              <SelectTrigger className="w-64"><SelectValue placeholder="Select a campaign" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_none">— select a campaign —</SelectItem>
+                {(campaignsQ.data ?? []).map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.client_name} — {c.campaign_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button size="sm" variant="outline" onClick={downloadCsv} disabled={!campaignId || !timesheetQ.data}>
+              <Download className="h-3.5 w-3.5 mr-1" /> Download CSV
+            </Button>
+          </div>
+        </div>
+
+        {!campaignId ? (
+          <p className="text-xs text-muted-foreground">
+            Pick a campaign to see rider hours (from GPS sessions) across its whole run, in one place.
+          </p>
+        ) : timesheetQ.isError ? (
+          <ErrorState title="Couldn't load timesheet" error={timesheetQ.error} onRetry={() => timesheetQ.refetch()} />
+        ) : timesheetQ.isLoading || !timesheetQ.data ? (
+          <div className="space-y-2">
+            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {timesheetQ.data.warnings.length > 0 && (
+              <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900 space-y-1">
+                {timesheetQ.data.warnings.map((w, i) => <p key={i}>⚠ {w}</p>)}
+              </div>
+            )}
+
+            {timesheetQ.data.riders.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-4">
+                No bags configured for this campaign yet.
+              </p>
+            ) : (
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium">Rider</th>
+                      <th className="text-left px-3 py-2 font-medium">Bag</th>
+                      <th className="text-right px-3 py-2 font-medium">Total</th>
+                      <th className="text-right px-3 py-2 font-medium">Working</th>
+                      <th className="text-right px-3 py-2 font-medium">Idle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {timesheetQ.data.riders.map((r) => (
+                      <tr key={r.bag_id} className="border-t">
+                        <td className="px-3 py-2">{r.rider_name}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{r.bag_name}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-medium">{r.totalHours.toFixed(1)}h</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{r.workingHours.toFixed(1)}h</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-amber-700">{r.idleHours.toFixed(1)}h</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t bg-muted/20 font-semibold">
+                      <td className="px-3 py-2" colSpan={2}>Total ({timesheetQ.data.totals.riderCount} riders · {timesheetQ.data.totals.bagCount} bags)</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{timesheetQ.data.totals.totalHours.toFixed(1)}h</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{timesheetQ.data.totals.workingHours.toFixed(1)}h</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-amber-700">{timesheetQ.data.totals.idleHours.toFixed(1)}h</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -502,6 +639,198 @@ function GenerateForm({
           </Button>
         </div>
       </CardContent>
+    </Card>
+  );
+}
+
+// ── Route screenshots panel ──────────────────────────────────────────────────
+// Automates what used to be a manual "filter Colorlight's map to each day and
+// screenshot it" step — captures a screenshot of this app's own map (same GPS
+// data) per bag/day via a headless browser, for feeding into the external AI
+// impressions algorithm.
+
+interface ScreenshotItem {
+  id: string;
+  bag_id: string;
+  bag_name: string;
+  date: string;
+  captured_at: string;
+  size_bytes: number;
+  download_url: string;
+}
+
+interface GenerateScreenshotsResult {
+  requested: number;
+  captured: number;
+  failed: number;
+  errors: { bag_id: string; date: string; error: string }[];
+}
+
+function RouteScreenshotsPanel() {
+  const qc = useQueryClient();
+  const [campaignId, setCampaignId] = useState<string>("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [result, setResult] = useState<GenerateScreenshotsResult | null>(null);
+  const [preview, setPreview] = useState<ScreenshotItem | null>(null);
+
+  const campaignsQ = useQuery<Campaign[]>({
+    queryKey: ["campaigns"],
+    queryFn: () => api.get("/campaigns"),
+  });
+
+  // Auto-fill the date range from the campaign, same shortcut as the report generator.
+  const onSelectCampaign = (id: string) => {
+    setCampaignId(id);
+    const c = campaignsQ.data?.find((x) => x.id === id);
+    if (c?.start_date) setStartDate(c.start_date);
+    if (c?.end_date) setEndDate(c.end_date);
+  };
+
+  const screenshotsQ = useQuery<ScreenshotItem[]>({
+    queryKey: ["campaign-screenshots", campaignId],
+    queryFn: () => api.get(`/campaigns/${campaignId}/screenshots`),
+    enabled: !!campaignId,
+  });
+
+  const generate = useMutation({
+    mutationFn: () =>
+      api.post<GenerateScreenshotsResult>(`/campaigns/${campaignId}/screenshots/generate`, {
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+      }),
+    onSuccess: (r) => {
+      setResult(r);
+      qc.invalidateQueries({ queryKey: ["campaign-screenshots", campaignId] });
+    },
+  });
+
+  const downloadZip = () => {
+    window.location.href = `/api/campaigns/${campaignId}/screenshots/zip`;
+  };
+
+  const items = screenshotsQ.data ?? [];
+
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Camera className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-sm font-semibold">Route screenshots</h3>
+          </div>
+          <Select value={campaignId || "_none"} onValueChange={(v) => onSelectCampaign(v === "_none" ? "" : v)}>
+            <SelectTrigger className="w-64"><SelectValue placeholder="Select a campaign" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_none">— select a campaign —</SelectItem>
+              {(campaignsQ.data ?? []).map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.client_name} — {c.campaign_name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {!campaignId ? (
+          <p className="text-xs text-muted-foreground">
+            Automatically capture each day's route map for a campaign's bags — no more manually
+            filtering Colorlight's dashboard to each day and screenshotting it.
+          </p>
+        ) : (
+          <>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">From</label>
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">To</label>
+                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div className="pt-4">
+                <Button
+                  size="sm"
+                  onClick={() => { setResult(null); generate.mutate(); }}
+                  disabled={!startDate || !endDate || generate.isPending}
+                >
+                  {generate.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Camera className="h-3.5 w-3.5 mr-1" />}
+                  Generate screenshots
+                </Button>
+              </div>
+              {items.length > 0 && (
+                <div className="pt-4">
+                  <Button size="sm" variant="outline" onClick={downloadZip}>
+                    <Download className="h-3.5 w-3.5 mr-1" /> Download all (.zip)
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {generate.isPending && (
+              <div className="rounded-md bg-primary/5 border border-primary/20 px-3 py-2 text-xs flex items-center gap-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                <span>Capturing route screenshots — this can take a while for long date ranges…</span>
+              </div>
+            )}
+
+            {result && (
+              <div className={`rounded-md border px-3 py-2 text-xs ${result.failed > 0 ? "bg-amber-50 border-amber-200 text-amber-900" : "bg-green-50 border-green-200 text-green-900"}`}>
+                Captured {result.captured} of {result.requested} screenshot{result.requested !== 1 ? "s" : ""}.
+                {result.failed > 0 && ` ${result.failed} failed.`}
+              </div>
+            )}
+
+            {screenshotsQ.isError ? (
+              <ErrorState title="Couldn't load screenshots" error={screenshotsQ.error} onRetry={() => screenshotsQ.refetch()} />
+            ) : screenshotsQ.isLoading ? (
+              <div className="grid grid-cols-4 gap-2">
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
+              </div>
+            ) : items.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-4">
+                No screenshots captured yet for this campaign.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                {items.map((s) => (
+                  <div key={s.id} className="border rounded-md overflow-hidden group relative">
+                    <button onClick={() => setPreview(s)} className="block w-full">
+                      <img src={s.download_url} alt={`${s.bag_name} · ${s.date}`} className="w-full h-20 object-cover" />
+                    </button>
+                    <div className="px-1.5 py-1 text-[10px] bg-muted/40 flex items-center justify-between">
+                      <span className="truncate" title={s.bag_name}>{s.bag_name}</span>
+                      <span className="text-muted-foreground">{s.date.slice(5)}</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (confirm(`Delete screenshot for ${s.bag_name} · ${s.date}?`)) {
+                          api.delete(`/screenshots/${s.id}`).then(() => qc.invalidateQueries({ queryKey: ["campaign-screenshots", campaignId] }));
+                        }
+                      }}
+                      className="absolute top-1 right-1 bg-white/90 rounded p-0.5 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                      title="Delete"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+
+      {preview && (
+        <Dialog open onOpenChange={() => setPreview(null)}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>{preview.bag_name} · {preview.date}</DialogTitle>
+            </DialogHeader>
+            <img src={preview.download_url} alt={`${preview.bag_name} · ${preview.date}`} className="w-full rounded-md border" />
+          </DialogContent>
+        </Dialog>
+      )}
     </Card>
   );
 }
