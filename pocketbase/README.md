@@ -21,16 +21,29 @@ Without one, this service works and then throws everything away on the next depl
 
 **Why that exact path.** PocketBase puts its data directory beside the executable, not in the working directory. The release unzips to `/pb`, so the data is `/pb/pb_data` and the hooks in `/pb/pb_hooks` are found. Moving the binary, adding a `WORKDIR` or passing `--dir` moves the data directory and orphans the volume.
 
-**The check that proves it took.** After a deploy, read the service log. A line offering a one-time superuser installer URL means the data directory was empty: either the volume isn't mounted where PocketBase looks, or it was just created. A data directory that survived prints only `Server started at …`. `df -h /pb/pb_data` in the service shell shows a mounted volume as its own device.
+**The check that proves it took.** The log can't tell you: the container creates the superuser before PocketBase starts, so an empty data directory logs exactly like a full one. Instead, run `df -h /pb/pb_data` in the service shell (a mounted volume shows as its own device, not the container's overlay), and after the first redeploy sign in to the admin UI and check your records are still there. (A one-time superuser installer URL in the log means `POCKETBASE_EMAIL` / `POCKETBASE_PASSWORD` aren't set: no superuser exists.)
 
 ## 2. Backups
 
 Data is kept for good, so back it up. The setup script turns on PocketBase's daily backup (03:30, keeping 3) if no schedule exists. Those land in `pb_data/backups`, on the same volume, so also point backups at S3: admin UI (`/_/`) → Settings → Backups. A schedule set there is left alone by the setup script.
 
-## 3. The schema: `npm run setup`
+## 3. Dumps, and moving the data to another instance
+
+PocketBase's backup is a full dump: the database and every stored file, zipped while it keeps running.
 
 ```sh
-# from this directory (npm install once); reads ../dashboard/.env for anything not set
+# a dump of the local instance (admin UI → Settings → Backups → New, or:)
+curl -X POST http://127.0.0.1:8190/api/backups -H "Authorization: <superuser token>" -d '{"name":"digilite_local.zip"}'
+```
+
+Dumps land in `pb_data/backups/` (gitignored). To move everything to a new instance (production, say), upload the zip there (admin UI → Settings → Backups → Upload) and **Restore** it. The Colorlight sync carries on from where it got to, because its progress is in the database too.
+
+A restore replaces the whole database, superusers included: straight after it, only the dumped instance's superuser can sign in (its login is in the repo's `.env`). Restart the service so the container's `superuser upsert` sets this instance's own superuser login again; if its email differs from the dumped one, delete the other under Settings → Superusers. The dashboard's logins come across too, so change the owner's password.
+
+## 4. The schema: `npm run setup`
+
+```sh
+# from this directory (npm install once); reads the repo's .env (../.env) for anything not set
 npm run setup                               # apply
 npm run setup -- --check                    # show what would change, change nothing
 POCKETBASE_URL=https://… npm run setup      # against another instance (e.g. production)
@@ -39,16 +52,16 @@ POCKETBASE_URL=https://… npm run setup      # against another instance (e.g. p
 npm run setup:schema                        # same script; add -- --check to preview
 ```
 
-It needs a superuser on the target instance: the image creates one at boot from `POCKETBASE_EMAIL` / `POCKETBASE_PASSWORD`. **Run it against production before deploying a version of the dashboard that needs new fields.** The API server checks the schema when it starts and refuses to run against one that's missing anything it relies on, so a forgotten run fails loudly instead of losing data (PocketBase would otherwise drop the unknown fields and answer 200).
+It needs a superuser on the target instance: the image creates one at boot from `POCKETBASE_EMAIL` / `POCKETBASE_PASSWORD`. Against another instance, also set that instance's superuser login for the command if it differs from the one in `.env` (values in the environment win over the file). **Run it against production before deploying a version of the dashboard that needs new fields.** The API server checks the schema when it starts and refuses to run against one that's missing anything it relies on, so a forgotten run fails loudly instead of losing data (PocketBase would otherwise drop the unknown fields and answer 200).
 
 What it promises:
 - **Idempotent.** Missing collections are created; existing ones have their fields, indexes and API rules brought in line. A second run reports `ok` for everything.
 - **It never drops data by itself.** A field that's in the database but not in the script stops the run with nothing changed. Check, then re-run with `--allow-drop`. A field can't change type in place; add one with a new name instead.
 - **Fields keep their ids**, so a reconciled field keeps its column and its data.
-- **Seeds are created once and never overwritten:** the settings row (`app_settings`, key `main`), the six provisional zones (only when there are no zones at all), and the first owner login from `OWNER_EMAIL` / `OWNER_PASSWORD` (only when no owner exists).
+- **Seeds are created once and never overwritten:** the settings row (`app_settings`, key `main`), the six provisional zones (only when there are no zones at all), and the first dashboard owner, with the superuser's email and password (only when no owner exists; change its password in the dashboard's Settings, which leaves the superuser's alone).
 - **History never cascades.** No relation deletes history with its parent: deleting a bag, rider or loop that has history is refused.
 
-## 4. What runs inside PocketBase
+## 5. What runs inside PocketBase
 
 | hook | what it does |
 |---|---|
@@ -59,7 +72,7 @@ Two things worth knowing before writing a hook:
 - **Each hook callback runs in its own JS runtime and can't see anything declared at the top of the file.** Put everything a callback needs inside it.
 - With no `--hooksDir`, PocketBase loads `pb_hooks` from beside the executable: `/pb/pb_hooks` in the image, this directory's `pb_hooks` locally.
 
-## 5. Running it locally
+## 6. Running it locally
 
 `npm run dev` from `dashboard/` starts it with everything else. On its own:
 
@@ -78,12 +91,16 @@ cd pocketbase
 POCKETBASE_URL=http://127.0.0.1:8199 POCKETBASE_EMAIL=scratch@example.com POCKETBASE_PASSWORD=scratchpw12345 npm run setup
 ```
 
-## 6. Deploying (two services)
+## 7. Deploying (two services)
 
 | service | built from | needs |
 |---|---|---|
-| `pocketbase` | `pocketbase/Dockerfile` (this directory) | a volume at `/pb/pb_data`; `POCKETBASE_EMAIL`, `POCKETBASE_PASSWORD`. Keep it private: only the API server needs to reach it |
-| `hub` (API + web app) | `dashboard/Dockerfile` | `POCKETBASE_URL` pointing at the service above (e.g. `http://pocketbase.railway.internal:8080`), the same superuser login, and the rest of `.env.example` |
+| `pocketbase` | `pocketbase/Dockerfile` (this directory) | a volume at `/pb/pb_data`; `POCKETBASE_EMAIL`, `POCKETBASE_PASSWORD` (the superuser it creates or updates at every boot; password 8+ characters); `PORT=8080` so the private address stays fixed. The API server reaches it over the private network |
+| `hub` (API + web app) | `dashboard/Dockerfile` | the same variables, with `POCKETBASE_URL` pointing at the service above (e.g. `http://pocketbase.railway.internal:8080`) |
+
+**Variables.** Both services take the same five, from the repo's `.env.example`: `POCKETBASE_URL`, `POCKETBASE_EMAIL`, `POCKETBASE_PASSWORD`, `COLORLIGHT_USERNAME`, `COLORLIGHT_PASSWORD`. Set them once and share them (on Railway: Project Settings → Shared Variables, shared with both services). This service uses only the superuser pair; `PORT` stays per service.
+
+**Public access is for you, not the app.** The API server only needs the private address. The admin UI, uploading a dump and running `npm run setup` from your machine need a public domain (on Railway: the service's Settings → Networking). Every collection is superuser-only, so a long random `POCKETBASE_PASSWORD` is what protects it; remove the domain when you don't need it.
 
 Order for a deploy that changes the schema: deploy `pocketbase` if its hooks changed, run `npm run setup` from here against it, then deploy `hub`.
 

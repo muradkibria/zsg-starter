@@ -10,9 +10,10 @@
  *   POCKETBASE_URL       e.g. http://127.0.0.1:8190
  *   POCKETBASE_EMAIL     superuser
  *   POCKETBASE_PASSWORD  superuser
- *   OWNER_EMAIL / OWNER_PASSWORD / OWNER_NAME   the first dashboard login (seeded once)
  *
- * Read from the environment, then from dashboard/.env for anything unset.
+ * Read from the environment, then from the repo's .env (shared with the dashboard)
+ * for anything unset. A fresh install's first dashboard owner signs in with the
+ * same email and password; change it in Settings once you're in.
  *
  *   npm run setup                                  apply (from this directory)
  *   npm run setup -- --check                       show what would change, change nothing
@@ -48,12 +49,10 @@
 
 const path = require("node:path");
 
-for (const file of ["../../dashboard/.env", "../../.env"]) {
-  try {
-    process.loadEnvFile(path.resolve(__dirname, file));
-  } catch {
-    // Not there: everything else must come from the environment.
-  }
+try {
+  process.loadEnvFile(path.resolve(__dirname, "../../.env"));
+} catch {
+  // No .env: everything must come from the environment.
 }
 
 const PocketBase = require("pocketbase/cjs");
@@ -66,7 +65,7 @@ const ALLOW_DROP = process.argv.includes("--allow-drop");
 
 if (!URL_ || !EMAIL || !PASSWORD) {
   console.error(
-    "\nMissing configuration. Set these in dashboard/.env or the environment:\n\n" +
+    "\nMissing configuration. Set these in the repo's .env or the environment:\n\n" +
       "  POCKETBASE_URL=http://127.0.0.1:8190\n" +
       "  POCKETBASE_EMAIL=you@example.com\n" +
       "  POCKETBASE_PASSWORD=...\n",
@@ -642,22 +641,20 @@ async function seed(pb) {
     console.log(`  kept     zones (${zones.totalItems})`);
   }
 
+  // The first dashboard owner signs in with the superuser's email and password.
   const owners = await pb.collection("users").getList(1, 1, { filter: 'role = "owner"', fields: "id" });
-  const { OWNER_EMAIL, OWNER_PASSWORD, OWNER_NAME } = process.env;
   if (owners.totalItems) {
     console.log("  kept     owner login");
-  } else if (OWNER_EMAIL && OWNER_PASSWORD) {
+  } else {
     await pb.collection("users").create({
-      email: OWNER_EMAIL,
-      password: OWNER_PASSWORD,
-      passwordConfirm: OWNER_PASSWORD,
-      name: OWNER_NAME || "Owner",
+      email: EMAIL,
+      password: PASSWORD,
+      passwordConfirm: PASSWORD,
+      name: "Owner",
       role: "owner",
       verified: true,
     });
-    console.log(`  seeded   owner login ${OWNER_EMAIL} (password: OWNER_PASSWORD)`);
-  } else {
-    console.log("  NOTE     no owner login yet: set OWNER_EMAIL and OWNER_PASSWORD and run this again");
+    console.log(`  seeded   owner login ${EMAIL} (the superuser's password: change it in Settings)`);
   }
 }
 
