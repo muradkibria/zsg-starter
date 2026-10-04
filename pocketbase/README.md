@@ -38,7 +38,7 @@ curl -X POST http://127.0.0.1:8190/api/backups -H "Authorization: <superuser tok
 
 Dumps land in `pb_data/backups/` (gitignored). To move everything to a new instance (production, say), upload the zip there (admin UI → Settings → Backups → Upload) and **Restore** it. The Colorlight sync carries on from where it got to, because its progress is in the database too.
 
-A restore replaces the whole database, superusers included: straight after it, only the dumped instance's superuser can sign in (its login is in the repo's `.env`). Restart the service so the container's `superuser upsert` sets this instance's own superuser login again; if its email differs from the dumped one, delete the other under Settings → Superusers. The dashboard's logins come across too, so change the owner's password.
+A restore replaces the whole database, superusers included: straight after it, only the dumped instance's superuser can sign in (its login is in the repo's `.env`). Restart the service so the container's `superuser upsert` sets this instance's own superuser login again; if its email differs from the dumped one, delete the other (account menu → Manage superusers). The dashboard's logins come across too, so change the owner's password.
 
 ## 4. The schema: `npm run setup`
 
