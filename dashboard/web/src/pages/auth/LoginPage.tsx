@@ -49,7 +49,6 @@ export default function LoginPage() {
           <Button type="submit" variant="primary" size="lg" loading={busy}>
             Sign in
           </Button>
-          <p className="m-0 text-center text-xs text-muted">Forgotten your password? Ask the account owner to reset it in Settings.</p>
         </form>
       </div>
     </div>
