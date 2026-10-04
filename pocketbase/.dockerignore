@@ -1,0 +1,6 @@
+# Built from this folder: only the hooks and the (empty) migrations go into the image.
+pocketbase
+pb_data
+node_modules
+*.zip
+scripts

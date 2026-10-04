@@ -1,0 +1,11 @@
+{
+  "name": "@digilite/pocketbase",
+  "private": true,
+  "description": "PocketBase for DigiLite Hub: the schema, the hooks and the image. DigiLite Hub's source of truth.",
+  "scripts": {
+    "setup": "node scripts/setup-schema.js"
+  },
+  "dependencies": {
+    "pocketbase": "^0.28.1"
+  }
+}
