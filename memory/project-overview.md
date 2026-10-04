@@ -1,7 +1,7 @@
 ---
 name: project-overview
 description: What DigiLite is, what's in this repo, and the rebuild plan
-updated: 2026-10-02
+updated: 2026-10-04
 ---
 
 DigiLite runs digital out-of-home advertising on LED screens mounted on food-delivery riders' bags in London. The screens are Colorlight A20 players (160×120 px) managed through Colorlight Cloud.
@@ -28,6 +28,8 @@ Direction and priorities: [[design-direction]], [[product-priorities]], [[domain
 - **Local ports:** PocketBase on 8190 (8090 is used by another project on this machine), API on 4000, web on 5173.
 
 **Build status (2026-09-29):** every area in the design is built and running on the real fleet's data: fleet map, bags, riders (documents, assignments, hand-overs), ads & loops (library, editor, publish), schedules (loop rules, sunrise/sunset brightness), payroll (fortnightly, review queue, approval, exports), exports (CSV/Excel/GPX/KML), campaigns and client reports, zones, settings, team and audit log. 241 server unit tests; visual QA clean on 40 screens (desktop and phone, dev and production builds). Changes to bags are still dry runs (see [[open-questions]]).
+
+**Deployment (2026-10-04):** PocketBase runs on Railway at https://digilite-pocketbase.up.railway.app (built from `pocketbase/`). The local database was restored there the same day (PocketBase backup upload + restore; every collection's count matched, stored files included). It includes the walkthrough demo data (20 riders, 5 campaigns, flagged `demo`; `npm run seed:demo -- --remove` deletes it) and the local owner login, which needed changing there. The local sync was stopped at the restore. The API server (`dashboard/Dockerfile`) wasn't deployed yet: once it is, it carries on from the saved cursors (each bag's GPS gap is filled 3 days per run).
 
 **Foundations originally agreed** (PocketBase replaced Postgres in the build):
 - real logins with roles, plus an audit log;

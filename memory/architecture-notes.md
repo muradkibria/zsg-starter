@@ -1,7 +1,7 @@
 ---
 name: architecture-notes
 description: Technical approach agreed for the rebuild — map rendering at scale, data flow from Colorlight, aggregation
-updated: 2026-10-02
+updated: 2026-10-04
 ---
 
 **Map at scale**
@@ -44,14 +44,23 @@ Related: [[colorlight-api]], [[domain-model]].
 - `pocketbase/` (repo root, beside `dashboard/`, with its own `package.json`/`node_modules`) is a deployable service: `Dockerfile` (release unzipped to `/pb`, hooks baked in, superuser upserted from `POCKETBASE_EMAIL`/`POCKETBASE_PASSWORD` at boot, persistent volume at `/pb/pb_data`), `pb_hooks/`, an empty `pb_migrations/`, and `scripts/setup-schema.js`.
 - The schema is that script, not migrations: idempotent, keeps field ids (so data stays), refuses to drop a field without `--allow-drop`, seeds settings/zones/owner once. It's run from `pocketbase/` (`npm run setup`, or `npm run setup:schema` from `dashboard/`) against an instance before deploying code that needs new fields; the API refuses to start against a schema missing fields it needs (`checkSchema` in `server/src/pb.ts`).
 - Locally the binary sits in `pocketbase/` so data, hooks and migrations are beside it, as in the image; it runs with `--automigrate=false` so schema changes never write migration files.
-- Environment: `POCKETBASE_URL`, `POCKETBASE_EMAIL`, `POCKETBASE_PASSWORD`.
+- Environment: see **Environment** below.
 - Setting the superuser password (the container does it at every boot; `npm run setup` does it too) revokes all existing superuser tokens. `server/src/pb.ts` signs in again when refused and resends once; without that the API was locked out until restarted.
 - Backups: daily at 03:30 (keep 3) unless a schedule exists; point them at S3 so a copy lives off the volume.
+
+**Environment (decided 2026-10-04: as few variables as possible, shared by everything)**
+- One `.env` at the repo root, template `.env.example` beside it, shared by `pocketbase/` (container boot + `scripts/setup-schema.js`) and `dashboard/` (server npm scripts use `--env-file-if-exists=../../.env`; `scripts/*.mjs` read `../.env`). Values already in the environment win over the file.
+- Five required: `POCKETBASE_URL`, `POCKETBASE_EMAIL`, `POCKETBASE_PASSWORD`, `COLORLIGHT_USERNAME`, `COLORLIGHT_PASSWORD`. Everything else defaults in `server/src/config.ts` and sits commented out in the template (`COLORLIGHT_WRITES`, test bag ids, sync days, `SESSION_SECRET`, `API_PORT`/`API_HOST`, `COLORLIGHT_API_BASE`).
+- Retired: `OWNER_EMAIL`/`OWNER_PASSWORD`/`OWNER_NAME` (the schema script seeds the first owner, once, with the superuser's email and password), `COOKIE_SECURE` (Secure whenever the request is HTTPS; `trust proxy` is on), and `SESSION_SECRET` as a required value (HKDF of `POCKETBASE_PASSWORD` unless set, so rotating that password signs everyone out of the dashboard). `npm run setup` drops retired keys and moved the old `dashboard/.env` up.
+- `scripts/qa.mjs` mints its own session for the first active owner (same key derivation), so QA needs no dashboard password.
+- Hosting: the same five as shared variables on both services; `PORT` stays per service (the API falls back to it).
+- A deployed `POCKETBASE_URL` in `.env` (not 127.0.0.1/localhost): `scripts/pocketbase.mjs serve` starts nothing, so `npm run dev` runs against it (sync included unless `SYNC_ENABLED=false`), and `npm run setup` applies the schema there without touching a local binary.
 
 **Integration pass (2026-09-29)**
 - **Loops ↔ bags by file name.** Programs carry `vsn_name`; bags report the same name as playing. The sync stores `loops.colorlight_vsn` and `bags.playing_loop` (`domain/playing.ts`). Same-named loops ("MTF" ×2) stay apart; a bag on an old copy of the fleet loop is flagged "Playing an older copy".
 - **Loop slots.** Imports keep order, repeats and each slot's length (`programSlots`). An ad can fill several slots, so plays per slot differ; "June 26" is 6 slots, 1 min 3 s.
 - **Ad files are ours.** The media sync copies each ad file (≤ 100 MB, 250 MB per run) into PocketBase, so ads play in the dashboard without going to Colorlight. `pipeFile` streams with HTTP Range (needed by Safari) and sends personal files as `no-store`.
+- **Late uploads (2026-10-04).** `colorlight/sync/reconcile.ts` compares each bag-day's GPS and play totals with Colorlight and re-reads only what grew (GPS from the same response; plays per 6-hour block, then per hour), after a bag reconnects from 30+ minutes away (20 min and 2 h later), every 2 hours for 2 days and daily for 14. Late GPS batches are placed just before their upload, one fix per GPS interval (`spreadLatePoints`), and days are read with an hour either side (`loadPlacedPoints`). That removed invented long shifts: 14–27 Sep shifts over 10 hours went from about 25 to 18. Approved pay periods report `changedSinceApproval`. `npm run recompute -w server` recomputes stored days (3,194 in 8 s).
 - **Downtime is filled in (fixed 2026-10-04).** The regular sync used to fetch only bags reporting in the last 30 min (GPS) or 2 h (plays), and plays jumped ahead after 48 h, so anything a bag did while the server was down and before it went offline was never recorded. It's now driven by each bag's cursor up to its last report (`trackWindow`, `planPlayHours`), runs straight after a start, and the history import retries every 30 minutes and pauses when Colorlight stops answering. Found when a laptop sleep cut the network mid-import.
 - **Restarts lose nothing.** The rollup's dirty-day list, the sync's last update times and the history import's progress are saved in `sync_state`. Reads to PocketBase retry once after a dropped connection; writes never retry.
 - **Sessions.** The session cookie carries `users.session_version`; resetting or changing a password bumps it, which signs that person out elsewhere.

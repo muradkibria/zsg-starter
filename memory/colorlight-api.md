@@ -1,7 +1,7 @@
 ---
 name: colorlight-api
 description: Colorlight Cloud official API — docs, auth, the endpoints we rely on, and caveats
-updated: 2026-10-02
+updated: 2026-10-04
 ---
 
 **Docs:** https://developer.colorlightcloud.com/cloudServer/en/ (VuePress; page paths are pinyin slugs under `/cloudServer/en/invoke-colorlightcloud-apis/api-list/...`). A full page list is in the site bundle's siteData.
@@ -44,6 +44,13 @@ updated: 2026-10-02
 - A program's slots are in `program_info.children` (pages) → `children` (file windows) → `children` (files, with `fileID`). Repeats are separate pages: "June 26" has 6 slots, one ad in 3 of them. `durationInSecond` is the slot length that matches measured plays (e.g. 167 plays/hour for the 3× ad, 56 for the others).
 - Reading one program (`GET /wp-json/wp/v2/programs/{id}`, with or without `?context=edit`) returns 400 on our tenant; use the list.
 - Some programs bags have downloaded (e.g. "deliveroo test 4") aren't visible to our editor account, so a bag can play a loop we can't match.
+
+**Late uploads (measured 2026-10-04)**
+- A bag without signal keeps playing ads and recording GPS, and uploads its backlog when it reconnects.
+- GPS: only its last ~15 minutes are kept (batches top out at 30 fixes at the 30 s interval), all stamped with the upload time (serverTime = clientTime). After gaps of 10+ minutes, 69 of 206 batches sat next to the first fix after the gap and only 2 next to the last fix before it, so they belong just before the upload, not spread across the gap. 49 of 5,683 late batches crossed London midnight.
+- Plays are filed under the hour they were played, so past hours grow after the fact. Over 10 days our hourly reads were 15,085 plays short (3.9%) until a reconcile against Colorlight's day totals; GPS per day matched exactly.
+- Bags with no GPS fix still play ads (Bag 013 played thousands a day with no GPS), so never find play hours from GPS.
+- Every bag: GPS every 30 s, content (play) reporting on with no fixed interval.
 
 **How much history Colorlight keeps (measured 2026-10-02)**
 - GPS tracks: about 90 days (points at 80 days back, none at 100).
