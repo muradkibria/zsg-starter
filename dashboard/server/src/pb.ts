@@ -95,7 +95,7 @@ export async function connectPb(retries = 60): Promise<void> {
  * data without an error. The schema comes from the repo's pocketbase/scripts/setup-schema.js.
  */
 const EXPECTED: Record<string, string[]> = {
-  users: ["role", "disabled", "session_version"],
+  users: ["role", "disabled", "session_version", "login_code"],
   bags: ["colorlight_id", "lifecycle", "playing_loop", "device_status"],
   gps_points: ["bag", "ts", "k"],
   plays: ["bag", "hour", "media_md5"],
@@ -128,13 +128,6 @@ export async function checkSchema(): Promise<void> {
   if (missing.length) {
     throw new Error(`The database schema is behind this code (missing ${missing.slice(0, 8).join(", ")}${missing.length > 8 ? "…" : ""}). Run \`npm run setup:schema\`.`);
   }
-}
-
-/** A separate client for checking dashboard users' passwords (never shares the superuser auth). */
-export function userClient() {
-  const c = new PocketBase(config.POCKETBASE_URL);
-  c.autoCancellation(false);
-  return c;
 }
 
 /**

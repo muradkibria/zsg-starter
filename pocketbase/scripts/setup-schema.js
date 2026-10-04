@@ -36,10 +36,10 @@
  *     stops and lists them, because the column's data goes with it. Check, then
  *     re-run with --allow-drop.
  *
- * Every collection is locked: all API rules null, superuser only. The web app
- * never talks to PocketBase; the API server is the only client and enforces roles
- * itself. The one opening is `users.authRule = ""`, which lets the API server check
- * a dashboard login's password.
+ * Every collection is locked: all API rules null, superuser only, and nobody can
+ * sign in to PocketBase as a dashboard user (`users.authRule` is null too). The web
+ * app never talks to PocketBase; the API server is the only client, checks each
+ * person's six-digit sign-in code itself and enforces roles.
  *
  * What this script cannot do, so nobody looks for it here:
  *   - change a field's type in place. Add a field with a new name and backfill it;
@@ -47,6 +47,7 @@
  *     text reads "" until something writes it.
  */
 
+const crypto = require("node:crypto");
 const path = require("node:path");
 
 try {
@@ -103,7 +104,8 @@ const COLLECTIONS = [
     name: "users",
     type: "auth",
     // PocketBase's own auth fields (email, password, tokenKey, verified,
-    // emailVisibility) and their indexes are kept as they are.
+    // emailVisibility) and their indexes are kept as they are. The password is
+    // random and unused: people sign in to the dashboard with their code.
     fields: [
       text("name", 255),
       file("avatar", 0, ["image/jpeg", "image/png", "image/svg+xml", "image/gif", "image/webp"]),
@@ -111,11 +113,14 @@ const COLLECTIONS = [
       updated(),
       select("role", ["owner", "ops", "sales", "viewer"], { required: true }),
       bool("disabled"),
-      // Carried in the dashboard's session cookie. Resetting or changing a password
-      // bumps it, which ends that person's other sessions.
+      // Carried in the dashboard's session cookie. A new code bumps it, which ends
+      // that person's other sessions.
       int("session_version"),
+      // Their six-digit sign-in code, unique across the team (empty: they can't sign in).
+      text("login_code", 6, { pattern: "^[0-9]{6}$", hidden: true }),
     ],
-    rules: { ...LOCKED, authRule: "", manageRule: null },
+    indexes: ["CREATE UNIQUE INDEX idx_users_login_code ON users (login_code) WHERE login_code != ''"],
+    rules: { ...LOCKED, authRule: null, manageRule: null },
   },
 
   // ── Contracts and ads ─────────────────────────────────────────────────────
@@ -511,7 +516,7 @@ const RULE_KEYS = ["listRule", "viewRule", "createRule", "updateRule", "deleteRu
 
 /** The options this file manages, per type, with PocketBase's defaults. */
 const MANAGED = {
-  text: { required: false, max: 0 },
+  text: { required: false, max: 0, pattern: "", hidden: false },
   number: { required: false, onlyInt: false },
   bool: { required: false },
   date: { required: false },
@@ -641,20 +646,31 @@ async function seed(pb) {
     console.log(`  kept     zones (${zones.totalItems})`);
   }
 
-  // The first dashboard owner signs in with the superuser's email and password.
-  const owners = await pb.collection("users").getList(1, 1, { filter: 'role = "owner"', fields: "id" });
-  if (owners.totalItems) {
-    console.log("  kept     owner login");
+  // The first owner, and a sign-in code for them if no working owner has one (so
+  // someone can always get in). The code is printed here, once; the owner gives
+  // everyone else theirs from the dashboard's Settings → Team & roles.
+  const owners = await pb.collection("users").getFullList({ filter: 'role = "owner"', sort: "created", fields: "id,disabled,login_code" });
+  const working = owners.filter((o) => !o.disabled);
+  if (!owners.length) {
+    const code = await unusedCode(pb);
+    const password = crypto.randomBytes(24).toString("base64url");
+    await pb.collection("users").create({ email: EMAIL, password, passwordConfirm: password, name: "Owner", role: "owner", verified: true, login_code: code });
+    console.log(`  seeded   owner login, sign-in code ${code} (shown once: keep it)`);
+  } else if (working.length && !working.some((o) => o.login_code)) {
+    const code = await unusedCode(pb);
+    await pb.collection("users").update(working[0].id, { login_code: code, "session_version+": 1 });
+    console.log(`  set      a sign-in code for the owner: ${code} (shown once: keep it)`);
   } else {
-    await pb.collection("users").create({
-      email: EMAIL,
-      password: PASSWORD,
-      passwordConfirm: PASSWORD,
-      name: "Owner",
-      role: "owner",
-      verified: true,
-    });
-    console.log(`  seeded   owner login ${EMAIL} (the superuser's password: change it in Settings)`);
+    console.log("  kept     owner login");
+  }
+}
+
+/** A random six-digit code nobody on the team has. */
+async function unusedCode(pb) {
+  for (;;) {
+    const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+    const taken = await pb.collection("users").getList(1, 1, { filter: `login_code = "${code}"`, fields: "id" });
+    if (!taken.totalItems) return code;
   }
 }
 

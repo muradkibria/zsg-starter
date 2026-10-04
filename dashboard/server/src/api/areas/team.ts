@@ -1,22 +1,23 @@
 // team area routes (mounted under /api). Owned by the team feature.
 //
-//   GET   /team                       everyone with a login               team.edit (owner)
-//   POST  /team                       add someone; temporary password     team.edit
-//   PATCH /team/:id                   rename, change role, switch off/on  team.edit
-//   POST  /team/:id/reset-password    new temporary password              team.edit
-//   POST  /team/me/password           change your own password            any signed-in user
+//   GET   /team                   everyone with a login               team.edit (owner)
+//   POST  /team                   add someone; returns their code     team.edit
+//   PATCH /team/:id               rename, change role, switch off/on  team.edit
+//   POST  /team/:id/new-code      a new code for someone              team.edit
+//   POST  /team/me/new-code       a new code for yourself             any signed-in user
 //
-// Temporary passwords are returned once in the response and never logged or
-// stored in plain text (PocketBase keeps only a hash).
+// Everyone signs in with their own six-digit code. Codes are made here at random:
+// nobody picks one, so nobody can find someone else's by trying codes that are
+// "taken". A code is returned once and never logged.
 
 import express, { type Response, type Router } from "express";
 import { z } from "zod";
-import { PASSWORD_MIN_LENGTH, ROLE_LABEL, type TeamPasswordResult } from "@digilite/shared";
+import { ROLE_LABEL, type TeamCodeResult } from "@digilite/shared";
 import { audit } from "../../domain/audit";
-import { listTeam, loadTeamUsers, teamChangeProblem, tempPassword, toTeamMember } from "../../domain/team";
-import { getOneOrNull, pb, userClient, type RecordModel } from "../../pb";
-import { forgetUser, setPassword } from "../auth";
-import { badRequest, HttpError, need, notFound, param, parse, user } from "../http";
+import { listTeam, loadTeamUsers, teamChangeProblem, toTeamMember } from "../../domain/team";
+import { getOneOrNull, pb, type RecordModel } from "../../pb";
+import { forgetUser, setCode, unusedCode, unusedPassword } from "../auth";
+import { badRequest, need, notFound, param, parse, user } from "../http";
 
 const role = z.enum(["owner", "ops", "sales", "viewer"]);
 const inviteSchema = z.object({
@@ -29,24 +30,10 @@ const patchSchema = z.object({
   role: role.optional(),
   disabled: z.boolean().optional(),
 });
-const passwordSchema = z.object({
-  currentPassword: z.string().min(1).max(200),
-  newPassword: z.string().min(PASSWORD_MIN_LENGTH).max(200),
-});
 
-/** Responses that carry a password must never be cached anywhere. */
+/** Responses that carry a code must never be cached anywhere. */
 function noStore(res: Response) {
   res.setHeader("Cache-Control", "no-store");
-}
-
-// Changing your own password checks the current one: allow 8 tries per 10 minutes.
-const tries = new Map<string, number[]>();
-function throttle(userId: string) {
-  const now = Date.now();
-  const list = (tries.get(userId) ?? []).filter((t) => now - t < 10 * 60_000);
-  if (list.length >= 8) throw new HttpError(429, "Too many attempts. Try again in a few minutes.");
-  list.push(now);
-  tries.set(userId, list);
 }
 
 export function teamRouter(): Router {
@@ -60,7 +47,8 @@ export function teamRouter(): Router {
     const body = parse(inviteSchema, req.body);
     const users = await loadTeamUsers();
     if (users.some((u) => String(u.email).toLowerCase() === body.email)) throw badRequest("Someone on the team already uses that email");
-    const password = tempPassword();
+    const code = await unusedCode();
+    const password = unusedPassword();
     const rec = await pb.collection("users").create<RecordModel>({
       email: body.email,
       name: body.name,
@@ -70,11 +58,12 @@ export function teamRouter(): Router {
       emailVisibility: false,
       password,
       passwordConfirm: password,
+      login_code: code,
     });
     forgetUser(rec.id);
     await audit(user(req), "team.invite", `Added ${body.name} to the team as ${ROLE_LABEL[body.role]}`, { type: "user", id: rec.id });
     noStore(res);
-    const out: TeamPasswordResult = { member: toTeamMember(rec, null), tempPassword: password };
+    const out: TeamCodeResult = { member: toTeamMember(rec, null), code };
     res.status(201).json(out);
   });
 
@@ -122,35 +111,29 @@ export function teamRouter(): Router {
     res.json(member);
   });
 
-  r.post("/team/:id/reset-password", need("team.edit"), async (req, res) => {
+  // Before /team/:id/new-code, which would otherwise take "me" for an id.
+  r.post("/team/me/new-code", async (req, res) => {
     const me = user(req);
-    const target = await getOneOrNull<RecordModel>("users", param(req, "id"));
-    if (!target) throw notFound("That person isn't on the team");
-    if (target.id === me.id) throw badRequest("Use “Change your password” for your own login");
-    const password = tempPassword();
-    await setPassword(target.id, password);
-    await audit(me, "team.reset_password", `Reset ${target.name || target.email}'s password`, { type: "user", id: target.id });
+    const code = await unusedCode();
+    const rec = await setCode(me.id, code, { res, user: me });
+    await audit(me, "team.code", `${me.name} got a new sign-in code`, { type: "user", id: me.id });
     noStore(res);
-    const [member] = (await listTeam()).filter((m) => m.id === target.id);
-    const out: TeamPasswordResult = { member, tempPassword: password };
+    const out: TeamCodeResult = { member: toTeamMember(rec, null), code };
     res.json(out);
   });
 
-  r.post("/team/me/password", async (req, res) => {
+  r.post("/team/:id/new-code", need("team.edit"), async (req, res) => {
     const me = user(req);
-    const body = parse(passwordSchema, req.body);
-    throttle(me.id);
-    const rec = await getOneOrNull<RecordModel>("users", me.id);
-    if (!rec || rec.disabled) throw new HttpError(401, "Please sign in");
-    try {
-      await userClient().collection("users").authWithPassword(rec.email, body.currentPassword);
-    } catch {
-      throw badRequest("Your current password isn't right");
-    }
-    if (body.newPassword === body.currentPassword) throw badRequest("Pick a new password that's different from the current one");
-    await setPassword(me.id, body.newPassword, { res, user: me });
-    await audit(me, "team.password", `${me.name} changed their password`, { type: "user", id: me.id });
-    res.json({ ok: true });
+    const target = await getOneOrNull<RecordModel>("users", param(req, "id"));
+    if (!target) throw notFound("That person isn't on the team");
+    if (target.id === me.id) throw badRequest("Use “Get a new code” under Your sign-in code for your own");
+    const code = await unusedCode();
+    await setCode(target.id, code);
+    await audit(me, "team.new_code", `Gave ${target.name || target.email} a new sign-in code`, { type: "user", id: target.id });
+    noStore(res);
+    const [member] = (await listTeam()).filter((m) => m.id === target.id);
+    const out: TeamCodeResult = { member, code };
+    res.json(out);
   });
 
   return r;

@@ -38,7 +38,7 @@ curl -X POST http://127.0.0.1:8190/api/backups -H "Authorization: <superuser tok
 
 Dumps land in `pb_data/backups/` (gitignored). To move everything to a new instance (production, say), upload the zip there (admin UI → Settings → Backups → Upload) and **Restore** it. The Colorlight sync carries on from where it got to, because its progress is in the database too.
 
-A restore replaces the whole database, superusers included: straight after it, only the dumped instance's superuser can sign in (its login is in the repo's `.env`). Restart the service so the container's `superuser upsert` sets this instance's own superuser login again; if its email differs from the dumped one, delete the other (account menu → Manage superusers). The dashboard's logins come across too, so change the owner's password.
+A restore replaces the whole database, superusers included: straight after it, only the dumped instance's superuser can sign in (its login is in the repo's `.env`). Restart the service so the container's `superuser upsert` sets this instance's own superuser login again; if its email differs from the dumped one, delete the other (account menu → Manage superusers). The dashboard's logins and their sign-in codes come across too.
 
 ## 4. The schema: `npm run setup`
 
@@ -58,7 +58,7 @@ What it promises:
 - **Idempotent.** Missing collections are created; existing ones have their fields, indexes and API rules brought in line. A second run reports `ok` for everything.
 - **It never drops data by itself.** A field that's in the database but not in the script stops the run with nothing changed. Check, then re-run with `--allow-drop`. A field can't change type in place; add one with a new name instead.
 - **Fields keep their ids**, so a reconciled field keeps its column and its data.
-- **Seeds are created once and never overwritten:** the settings row (`app_settings`, key `main`), the six provisional zones (only when there are no zones at all), and the first dashboard owner, with the superuser's email and password (only when no owner exists; change its password in the dashboard's Settings, which leaves the superuser's alone).
+- **Seeds are created once and never overwritten:** the settings row (`app_settings`, key `main`), the six provisional zones (only when there are no zones at all), and the first dashboard owner (only when no owner exists). If no working owner has a sign-in code, one gets a random code, printed once, so someone can always get in.
 - **History never cascades.** No relation deletes history with its parent: deleting a bag, rider or loop that has history is refused.
 
 ## 5. What runs inside PocketBase

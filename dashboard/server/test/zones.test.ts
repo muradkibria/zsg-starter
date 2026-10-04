@@ -17,7 +17,8 @@ import {
   type TrackPoint,
   type ZoneShape,
 } from "@digilite/shared";
-import { teamChangeProblem, tempPassword } from "../src/domain/team";
+import { randomCode, SignInGate } from "../src/domain/signin";
+import { teamChangeProblem } from "../src/domain/team";
 
 const SHOREDITCH = { lat: 51.53275, lng: -0.0745 };
 
@@ -215,14 +216,47 @@ describe("team rules", () => {
     expect(teamChangeProblem(users, "own1", "nobody", {})).toMatch(/isn't on the team/);
   });
 
-  it("makes readable, unique temporary passwords", () => {
+});
+
+describe("sign-in codes", () => {
+  it("makes six-digit codes, leading zeros included", () => {
     const seen = new Set<string>();
-    for (let i = 0; i < 200; i++) {
-      const p = tempPassword();
-      expect(p).toMatch(/^[a-hjkmnp-z2-9]{4}(-[a-hjkmnp-z2-9]{4}){3}$/);
-      seen.add(p);
+    for (let i = 0; i < 2000; i++) {
+      const c = randomCode();
+      expect(c).toMatch(/^\d{6}$/);
+      seen.add(c);
     }
-    expect(seen.size).toBe(200);
+    // Random over a million: 2,000 draws repeat a few times at most.
+    expect(seen.size).toBeGreaterThan(1990);
+  });
+
+  const MIN = 60_000;
+  const limits = { perAddress: 5, addressWindowMs: 15 * MIN, overall: 50, overallWindowMs: 60 * MIN };
+
+  it("rations wrong codes per address, and lets them try again later", () => {
+    const gate = new SignInGate(limits);
+    for (let i = 0; i < 5; i++) {
+      expect(gate.blocked("a", i)).toBeNull();
+      gate.wrong("a", i);
+    }
+    expect(gate.blocked("a", 10)).toMatch(/Try again in 15 minutes/);
+    expect(gate.blocked("b", 10)).toBeNull();
+    expect(gate.blocked("a", 15 * MIN + 5)).toBeNull();
+  });
+
+  it("a right code clears that address's wrong ones", () => {
+    const gate = new SignInGate(limits);
+    for (let i = 0; i < 4; i++) gate.wrong("a", i);
+    gate.right("a");
+    for (let i = 0; i < 4; i++) gate.wrong("a", 10 + i);
+    expect(gate.blocked("a", 20)).toBeNull();
+  });
+
+  it("pauses everyone after too many wrong codes from many addresses, for an hour", () => {
+    const gate = new SignInGate(limits);
+    for (let i = 0; i < 50; i++) gate.wrong(`addr${i}`, i * 1000);
+    expect(gate.blocked("someone-new", 60_000)).toMatch(/paused/);
+    expect(gate.blocked("someone-new", 60 * MIN + 49_001)).toBeNull();
   });
 });
 

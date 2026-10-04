@@ -5,15 +5,14 @@ import type {
   AuditEntryDto,
   AuditFacets,
   AuditQuery,
-  ChangePasswordRequest,
   FleetLoopOption,
   Paged,
   RecomputeStatus,
   SettingsDto,
   SyncHealth,
+  TeamCodeResult,
   TeamInviteRequest,
   TeamMember,
-  TeamPasswordResult,
   TeamPatch,
   WriteMode,
 } from "@digilite/shared";
@@ -88,7 +87,7 @@ function useTeamDone() {
 
 export function useInvite() {
   const done = useTeamDone();
-  return useMutation({ mutationFn: (body: TeamInviteRequest) => api.post<TeamPasswordResult>("/team", body), onSuccess: done });
+  return useMutation({ mutationFn: (body: TeamInviteRequest) => api.post<TeamCodeResult>("/team", body), onSuccess: done });
 }
 
 export function useUpdateMember() {
@@ -96,17 +95,14 @@ export function useUpdateMember() {
   return useMutation({ mutationFn: ({ id, patch }: { id: string; patch: TeamPatch }) => api.patch<TeamMember>(`/team/${id}`, patch), onSuccess: done });
 }
 
-export function useResetPassword() {
+export function useNewCode() {
   const done = useTeamDone();
-  return useMutation({ mutationFn: (id: string) => api.post<TeamPasswordResult>(`/team/${id}/reset-password`), onSuccess: done });
+  return useMutation({ mutationFn: (id: string) => api.post<TeamCodeResult>(`/team/${id}/new-code`), onSuccess: done });
 }
 
-export function useChangePassword() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: ChangePasswordRequest) => api.post<{ ok: true }>("/team/me/password", body),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["audit"] }),
-  });
+export function useNewOwnCode() {
+  const done = useTeamDone();
+  return useMutation({ mutationFn: () => api.post<TeamCodeResult>("/team/me/new-code"), onSuccess: done });
 }
 
 // ── Audit ─────────────────────────────────────────────────────────────────────

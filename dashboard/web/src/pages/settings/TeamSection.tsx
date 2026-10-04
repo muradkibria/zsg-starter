@@ -1,24 +1,23 @@
-// Team & roles: who can sign in, what each role can do, and your password.
+// Team & roles: who can sign in, what each role can do, and your sign-in code.
 
 import { useState, type FormEvent } from "react";
 import clsx from "clsx";
 import { Check, Copy, KeyRound, Minus, Power, UserPlus } from "lucide-react";
 import {
-  PASSWORD_MIN_LENGTH,
   PERMISSION_ROWS,
   ROLE_LABEL,
   ROLE_PERMISSIONS,
   ROLE_SUMMARY,
   ROLES,
   type Role,
+  type TeamCodeResult,
   type TeamMember,
-  type TeamPasswordResult,
 } from "@digilite/shared";
 import { useFeedback } from "@/components/feedback";
 import { Avatar, Button, Card, CardHeader, ErrorState, Field, Input, Notice, Pill, Select, Spinner } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
 import { when } from "@/lib/format";
-import { useChangePassword, useInvite, useResetPassword, useTeam, useUpdateMember } from "./api";
+import { useInvite, useNewCode, useNewOwnCode, useTeam, useUpdateMember } from "./api";
 import { Modal } from "./Modal";
 
 export function TeamSection() {
@@ -28,7 +27,7 @@ export function TeamSection() {
     <div className="flex flex-col gap-5">
       {owner ? <TeamList /> : user && <YourAccount />}
       <RolesTable />
-      <PasswordCard />
+      <CodeCard />
     </div>
   );
 }
@@ -40,9 +39,9 @@ function TeamList() {
   const team = useTeam(true);
   const invite = useInvite();
   const updateMember = useUpdateMember();
-  const reset = useResetPassword();
+  const newCode = useNewCode();
   const [adding, setAdding] = useState(false);
-  const [reveal, setReveal] = useState<{ result: TeamPasswordResult; kind: "new" | "reset" } | null>(null);
+  const [reveal, setReveal] = useState<{ result: TeamCodeResult; kind: "new" | "reset" } | null>(null);
   const [renaming, setRenaming] = useState<TeamMember | null>(null);
 
   const changeRole = async (m: TeamMember, role: Role) => {
@@ -81,16 +80,18 @@ function TeamList() {
     }
   };
 
-  const resetPassword = async (m: TeamMember) => {
+  const giveNewCode = async (m: TeamMember) => {
     const ok = await confirm({
-      title: `Reset ${m.name}'s password?`,
-      body: "Their current password stops working. You'll get a new temporary password to give them.",
-      confirm: "Reset password",
-      danger: true,
+      title: m.hasCode ? `Give ${m.name} a new code?` : `Give ${m.name} a code?`,
+      body: m.hasCode
+        ? "Their current code stops working and they're signed out. You'll see the new one once, to pass on."
+        : "You'll see it once, to pass on.",
+      confirm: m.hasCode ? "New code" : "Make a code",
+      danger: m.hasCode,
     });
     if (!ok) return;
     try {
-      setReveal({ result: await reset.mutateAsync(m.id), kind: "reset" });
+      setReveal({ result: await newCode.mutateAsync(m.id), kind: "reset" });
     } catch (e) {
       toast((e as Error).message, "error");
     }
@@ -144,6 +145,7 @@ function TeamList() {
                     <span className={clsx("truncate text-sm font-semibold", m.disabled && "text-muted line-through decoration-1")}>{m.name}</span>
                     {you && <Pill tone="info">You</Pill>}
                     {m.disabled && <Pill tone="red">Switched off</Pill>}
+                    {!m.disabled && !m.hasCode && <Pill tone="amber">No code</Pill>}
                   </span>
                   <span className="truncate text-xs text-muted">{m.email}</span>
                   <span className="text-[11px] text-caption">
@@ -175,8 +177,8 @@ function TeamList() {
                 {!you && (
                   <>
                     {!m.disabled && (
-                      <Button size="sm" variant="ghost" icon={<KeyRound className="size-3.5" />} onClick={() => void resetPassword(m)} disabled={reset.isPending}>
-                        Reset password
+                      <Button size="sm" variant="ghost" icon={<KeyRound className="size-3.5" />} onClick={() => void giveNewCode(m)} disabled={newCode.isPending}>
+                        {m.hasCode ? "New code" : "Give a code"}
                       </Button>
                     )}
                     <Button
@@ -196,7 +198,7 @@ function TeamList() {
         })}
       </ul>
 
-      {reveal && <PasswordReveal result={reveal.result} kind={reveal.kind} onClose={() => setReveal(null)} />}
+      {reveal && <CodeReveal result={reveal.result} kind={reveal.kind} onClose={() => setReveal(null)} />}
       {renaming && (
         <RenameDialog
           member={renaming}
@@ -249,33 +251,34 @@ function InviteForm({ busy, onCancel, onSubmit }: { busy: boolean; onCancel: () 
           ))}
         </Select>
       </Field>
-      <p className="m-0 text-xs text-muted">We'll make a temporary password for them. You'll see it once, to pass on privately.</p>
+      <p className="m-0 text-xs text-muted">We'll make a six-digit sign-in code for them. You'll see it once, to pass on privately.</p>
       <div className="flex justify-end gap-2">
         <Button onClick={onCancel} disabled={busy}>
           Cancel
         </Button>
         <Button type="submit" variant="primary" loading={busy}>
-          Add and make a password
+          Add and make a code
         </Button>
       </div>
     </form>
   );
 }
 
-function PasswordReveal({ result, kind, onClose }: { result: TeamPasswordResult; kind: "new" | "reset"; onClose: () => void }) {
+function CodeReveal({ result, kind, onClose }: { result: TeamCodeResult; kind: "new" | "reset" | "self"; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(result.tempPassword);
+      await navigator.clipboard.writeText(result.code);
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     } catch {
       setCopied(false);
     }
   };
+  const title = kind === "self" ? "Your new code" : kind === "new" ? `${result.member.name} can now sign in` : `New code for ${result.member.name}`;
   return (
     <Modal
-      title={kind === "new" ? `${result.member.name} can now sign in` : `New password for ${result.member.name}`}
+      title={title}
       onClose={onClose}
       footer={
         <Button variant="primary" onClick={onClose}>
@@ -284,19 +287,22 @@ function PasswordReveal({ result, kind, onClose }: { result: TeamPasswordResult;
       }
     >
       <p className="m-0">
-        Give them this temporary password with their email, <strong>{result.member.email}</strong>. They can change it in Settings → Team & roles
-        after signing in.
+        {kind === "self"
+          ? "Use it next time you sign in. Your old code has stopped working, and you're signed out everywhere else."
+          : `Give ${result.member.name} this code. It's all they need to sign in.`}
       </p>
       <div className="mt-4 flex items-center gap-2 rounded-xl border border-line bg-paper p-2 pl-3">
-        <code className="num min-w-0 flex-1 truncate font-mono text-[17px] font-semibold tracking-wide text-ink" aria-label="Temporary password">
-          {result.tempPassword}
+        <code className="num min-w-0 flex-1 truncate font-mono text-[22px] font-semibold tracking-[0.3em] text-ink" aria-label="Sign-in code">
+          {result.code}
         </code>
         <Button size="sm" variant={copied ? "secondary" : "primary"} onClick={() => void copy()} icon={copied ? <Check className="size-4" /> : <Copy className="size-4" />} data-autofocus>
           {copied ? "Copied" : "Copy"}
         </Button>
       </div>
       <Notice tone="amber">
-        <span className="block pt-0.5">This is the only time it's shown. Share it privately, not in a group chat.</span>
+        <span className="block pt-0.5">
+          {kind === "self" ? "This is the only time it's shown." : "This is the only time it's shown. Share it privately, not in a group chat."}
+        </span>
       </Notice>
     </Modal>
   );
@@ -407,53 +413,34 @@ function RolesTable() {
   );
 }
 
-// ── Your password ─────────────────────────────────────────────────────────────
-function PasswordCard() {
-  const { toast } = useFeedback();
-  const change = useChangePassword();
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [again, setAgain] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (next.length < PASSWORD_MIN_LENGTH) return setError(`Use at least ${PASSWORD_MIN_LENGTH} characters`);
-    if (next !== again) return setError("The new passwords don't match");
-    setError(null);
+// ── Your code ─────────────────────────────────────────────────────────────────
+function CodeCard() {
+  const { confirm, toast } = useFeedback();
+  const change = useNewOwnCode();
+  const [reveal, setReveal] = useState<TeamCodeResult | null>(null);
+  const getNew = async () => {
+    const ok = await confirm({
+      title: "Get a new code?",
+      body: "Your current code stops working, and you're signed out everywhere except here.",
+      confirm: "Get a new code",
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await change.mutateAsync({ currentPassword: current, newPassword: next });
-      setCurrent("");
-      setNext("");
-      setAgain("");
-      toast("Password changed");
-    } catch (err) {
-      setError((err as Error).message);
+      setReveal(await change.mutateAsync());
+    } catch (e) {
+      toast((e as Error).message, "error");
     }
   };
   return (
-    <Card className="flex flex-col gap-3 p-4 md:p-5" aria-label="Your password">
-      <CardHeader title="Your password" sub="Change it after signing in with a temporary password." />
-      <form onSubmit={submit} className="grid gap-3 sm:grid-cols-3">
-        <Field label="Current password">
-          <Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" />
-        </Field>
-        <Field label="New password" hint={`At least ${PASSWORD_MIN_LENGTH} characters`}>
-          <Input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" />
-        </Field>
-        <Field label="New password again">
-          <Input type="password" value={again} onChange={(e) => setAgain(e.target.value)} autoComplete="new-password" />
-        </Field>
-        {error && (
-          <p role="alert" className="m-0 text-xs font-medium text-red-ink sm:col-span-3">
-            {error}
-          </p>
-        )}
-        <div className="sm:col-span-3">
-          <Button type="submit" loading={change.isPending} disabled={!current || !next || !again}>
-            Change password
-          </Button>
-        </div>
-      </form>
+    <Card className="flex flex-col gap-3 p-4 md:p-5" aria-label="Your sign-in code">
+      <CardHeader title="Your sign-in code" sub="Six digits, yours alone. Get a new one if someone may have seen it." />
+      <div>
+        <Button icon={<KeyRound className="size-4" />} loading={change.isPending} onClick={() => void getNew()}>
+          Get a new code
+        </Button>
+      </div>
+      {reveal && <CodeReveal result={reveal} kind="self" onClose={() => setReveal(null)} />}
     </Card>
   );
 }

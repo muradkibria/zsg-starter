@@ -12,11 +12,11 @@ The admin dashboard for DigiLite's LED bags: where every bag is, who's carrying 
 ```bash
 cd dashboard
 npm install
-npm run setup      # creates the repo's .env, downloads PocketBase, applies the schema, seeds the owner login
+npm run setup      # creates the repo's .env, downloads PocketBase, applies the schema, prints the owner's sign-in code
 npm run dev        # database :8190 · API :4000 · web app http://127.0.0.1:5173
 ```
 
-Sign in with `POCKETBASE_EMAIL` / `POCKETBASE_PASSWORD` from the repo's `.env`: on a fresh install the first owner gets the PocketBase superuser's login. Change the owner's password in Settings once you're in (that doesn't change the superuser's).
+Everyone signs in with their own six-digit code. On a fresh install `npm run setup` prints the owner's, once; the owner gives everyone else theirs in Settings → Team & roles, where anyone can also get a new one for themselves. Codes are random, unique and kept in PocketBase (`users.login_code`); a new code signs that person out everywhere else, and wrong guesses are rationed (5 per address per 15 minutes, 50 an hour overall).
 
 On first start the Colorlight sync:
 - adds every bag;

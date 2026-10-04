@@ -6,7 +6,7 @@ import { api, ApiError, setUnauthorizedHandler } from "./api";
 interface AuthState {
   user: SessionUser | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (code: string) => Promise<void>;
   signOut: () => Promise<void>;
   can: (p: Permission) => boolean;
 }
@@ -32,7 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       loading,
-      signIn: async (email, password) => setUser(await api.post<SessionUser>("/auth/login", { email, password })),
+      signIn: async (code) => setUser(await api.post<SessionUser>("/auth/login", { code })),
       signOut: async () => {
         await api.post("/auth/logout").catch(() => {});
         setUser(null);

@@ -42,13 +42,13 @@ Browser (web/, React)  ──►  Our API (server/, Express, :4000)  ──►  
 ## Running locally
 
 ```bash
-npm run setup         # once: the repo's .env, PocketBase, superuser, schema, owner login
+npm run setup         # once: the repo's .env, PocketBase, superuser, schema, owner's sign-in code
 npm run dev           # PocketBase :8190 + API :4000 (auto-reload) + web :5173
 npm run setup:schema  # after changing ../pocketbase/scripts/setup-schema.js
 npm run seed:demo     # optional sample riders/campaigns (flagged demo; --remove to delete)
 ```
 
-Sign in at http://127.0.0.1:5173 with `POCKETBASE_EMAIL` / `POCKETBASE_PASSWORD` from the repo's `.env` (setup gives the first owner the superuser's login); the same login opens the PocketBase admin UI at http://127.0.0.1:8190/_/.
+Sign in at http://127.0.0.1:5173 with your six-digit code (setup prints the first owner's). The PocketBase admin UI at http://127.0.0.1:8190/_/ takes `POCKETBASE_EMAIL` / `POCKETBASE_PASSWORD` from the repo's `.env`; a code can also be set there, on the person's `users` record (`login_code`).
 
 With `POCKETBASE_URL` pointing at a deployed PocketBase instead, `npm run dev` and `npm start` use that one and start no local database, and `npm run setup` applies the schema there. The local server's Colorlight sync then writes to it too, so add `SYNC_ENABLED=false` while the deployed server is syncing.
 
@@ -94,7 +94,7 @@ With `POCKETBASE_URL` pointing at a deployed PocketBase instead, `npm run dev` a
   - `colorlight/writes.ts`: `sendCommand`, `putTerminalSchedule`, `uploadMedia`, `createProgram`, `publishProgram`, `decideFor(ids)`, `accountWritesAllowed()`. Every call returns a gate decision: `send`, `dry_run` or `block`.
   - `jobs/state.ts`: `markDirty(bagId, day)`; `dirtyDays` is processed by the rollup job (`jobs/rollups.ts`) and saved, so a restart doesn't drop it. The Colorlight sync's last update times are saved too.
   - `domain/playing.ts`: `matchPlayingLoop(bag, loops)` and `playsOlderCopy(bag, loop)`.
-  - `api/auth.ts`: `setPassword(userId, password, keepSignedIn?)` changes a password and ends that person's other sessions.
+  - `api/auth.ts`: `setCode(userId, code, keepSignedIn?)` gives someone a new sign-in code and ends their other sessions; `unusedCode()` makes a random one nobody has. Codes are made only by the server, never picked, so nobody can find someone else's by trying codes that are taken.
 - **Files.** Uploads use multer with memory storage, then a `FormData` create/update to PocketBase. Serve files with `pipeFile(res, collection, recordId, filename, {download, cacheSeconds, range})`. It streams, uses a superuser file token and never exposes PocketBase URLs. Pass `range: req.headers.range` for video (Safari won't play without it) and `cacheSeconds: 0` for personal files (sent as `no-store`).
 - **Contracts.** API request/response types for your area go in `shared/src/areas/<area>.ts` (exported from `@digilite/shared`). Core types (bags, routes, fleet, zones, settings) are in `shared/src/api.ts`.
 - **Tests.** Pure logic gets a vitest file in `server/test/<area>.test.ts`. Run `npm test -w server`.

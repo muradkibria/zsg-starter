@@ -19,13 +19,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const env = Object.fromEntries(
-  readFileSync(join(root, "..", ".env"), "utf8")
-    .split("\n")
-    .map((l) => l.match(/^([A-Z0-9_]+)=(.*)$/))
-    .filter(Boolean)
-    .map((m) => [m[1], m[2]]),
-);
+// The repo's .env, with anything set in the environment taking precedence (as everywhere else).
+const env = {
+  ...Object.fromEntries(
+    readFileSync(join(root, "..", ".env"), "utf8")
+      .split("\n")
+      .map((l) => l.match(/^([A-Z0-9_]+)=(.*)$/))
+      .filter(Boolean)
+      .map((m) => [m[1], m[2]]),
+  ),
+  ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith("POCKETBASE_") || k === "SESSION_SECRET")),
+};
 const BASE = process.env.BASE ?? "http://127.0.0.1:5173";
 
 /** A dashboard session for the first active owner, signed the way server/src/config.ts + api/auth.ts do. */

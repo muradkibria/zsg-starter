@@ -12,7 +12,8 @@ export function setUnauthorizedHandler(fn: () => void) {
 }
 
 async function handle<T>(res: Response): Promise<T> {
-  if (res.status === 401) {
+  // A 401 means the session has ended, except when signing in, where the message says why.
+  if (res.status === 401 && !res.url.endsWith("/api/auth/login")) {
     onUnauthorized?.();
     throw new ApiError(401, "Please sign in");
   }

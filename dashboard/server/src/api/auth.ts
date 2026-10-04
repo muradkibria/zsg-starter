@@ -1,6 +1,9 @@
-// Dashboard sign-in. Passwords are checked against PocketBase `users`; the API
-// then issues its own short-lived session cookie (httpOnly, SameSite=Lax).
+// Dashboard sign-in. Each person has their own six-digit code (`users.login_code`,
+// unique); the API checks it and issues its own short-lived session cookie
+// (httpOnly, SameSite=Lax). The cookie carries the person's session version, which
+// moves on whenever they get a new code, so that signs them out everywhere else.
 
+import { randomBytes } from "node:crypto";
 import type { NextFunction, Request, Response, Router } from "express";
 import express from "express";
 import { jwtVerify, SignJWT } from "jose";
@@ -8,14 +11,17 @@ import { z } from "zod";
 import type { Role, SessionUser } from "@digilite/shared";
 import { config } from "../config";
 import { audit } from "../domain/audit";
-import { getOneOrNull, pb, userClient, type RecordModel } from "../pb";
+import { randomCode, SignInGate } from "../domain/signin";
+import { logger } from "../log";
+import { getFirst, getOneOrNull, pb, q, type RecordModel } from "../pb";
 import { HttpError, parse } from "./http";
 
 const COOKIE = "dl_session";
 const secret = config.sessionKey;
 const TTL_HOURS = 12;
+const log = logger("auth");
 
-/** A signed-in person plus their session version (bumped when their password changes). */
+/** A signed-in person plus their session version (moved on when their code changes). */
 interface Known {
   user: SessionUser;
   version: number;
@@ -40,19 +46,28 @@ export function forgetUser(id: string) {
   userCache.delete(id);
 }
 
+/** A code nobody on the team has. */
+export async function unusedCode(): Promise<string> {
+  for (let i = 0; i < 20; i++) {
+    const code = randomCode();
+    if (!(await getFirst<RecordModel>("users", `login_code = ${q(code)}`, { fields: "id" }))) return code;
+  }
+  throw new HttpError(500, "Couldn't find a free code. Try again.");
+}
+
+/** PocketBase needs a password on every login record. Nobody uses it: everyone signs in with a code. */
+export const unusedPassword = () => randomBytes(24).toString("base64url");
+
 /**
- * Update a password and end every other session of that person: their session
- * version moves on, so older cookies stop working. Pass `res` to keep the
- * current browser signed in (someone changing their own password).
+ * Give someone a new code and end every other session of theirs: their session
+ * version moves on, so older cookies stop working. Pass `keepSignedIn` to keep the
+ * current browser signed in (someone getting a new code for themselves).
  */
-export async function setPassword(userId: string, password: string, keepSignedIn?: { res: Response; user: SessionUser }) {
-  const rec = await pb.collection("users").update<RecordModel>(userId, {
-    password,
-    passwordConfirm: password,
-    "session_version+": 1,
-  });
+export async function setCode(userId: string, code: string, keepSignedIn?: { res: Response; user: SessionUser }): Promise<RecordModel> {
+  const rec = await pb.collection("users").update<RecordModel>(userId, { login_code: code, "session_version+": 1 });
   forgetUser(userId);
   if (keepSignedIn) await issue(keepSignedIn.res, keepSignedIn.user, rec.session_version || 0);
+  return rec;
 }
 
 async function issue(res: Response, u: SessionUser, version: number) {
@@ -91,33 +106,32 @@ export function requireSignedIn(req: Request, _res: Response, next: NextFunction
   next();
 }
 
-const loginSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
+const loginSchema = z.object({ code: z.string().trim().regex(/^\d{6}$/, "Enter your six-digit code") });
 
-// Simple in-memory throttle: 10 attempts per 10 minutes per email+IP (relaxed in development).
-const attempts = new Map<string, number[]>();
-const MAX_ATTEMPTS = config.isProd ? 10 : 500;
-function throttle(key: string) {
-  const now = Date.now();
-  const list = (attempts.get(key) ?? []).filter((t) => now - t < 10 * 60000);
-  if (list.length >= MAX_ATTEMPTS) throw new HttpError(429, "Too many attempts. Try again in a few minutes.");
-  list.push(now);
-  attempts.set(key, list);
-}
+// Wrong codes are rationed (relaxed in development): 5 per address per 15 minutes,
+// and 50 an hour from everyone together.
+const gate = new SignInGate(
+  config.isProd
+    ? { perAddress: 5, addressWindowMs: 15 * 60_000, overall: 50, overallWindowMs: 60 * 60_000 }
+    : { perAddress: 500, addressWindowMs: 15 * 60_000, overall: 5000, overallWindowMs: 60 * 60_000 },
+);
 
 export function authRouter(): Router {
   const r = express.Router();
 
   r.post("/login", async (req, res) => {
-    const { email, password } = parse(loginSchema, req.body);
-    throttle(`${email.toLowerCase()}|${req.ip}`);
-    let rec: RecordModel;
-    try {
-      const auth = await userClient().collection("users").authWithPassword(email, password);
-      rec = auth.record;
-    } catch {
-      throw new HttpError(401, "That email and password don't match");
+    const { code } = parse(loginSchema, req.body);
+    const address = req.ip ?? "unknown";
+    const blocked = gate.blocked(address);
+    if (blocked) throw new HttpError(429, blocked);
+    const rec = await getFirst<RecordModel>("users", `login_code = ${q(code)}`);
+    if (!rec) {
+      gate.wrong(address);
+      log.warn(`wrong sign-in code from ${address}`);
+      throw new HttpError(401, "That code isn't right");
     }
-    if (rec.disabled) throw new HttpError(403, "This account has been switched off");
+    gate.right(address);
+    if (rec.disabled) throw new HttpError(403, "This login has been switched off");
     const u = toUser(rec);
     const version = rec.session_version || 0;
     userCache.set(u.id, { at: Date.now(), known: { user: u, version } });

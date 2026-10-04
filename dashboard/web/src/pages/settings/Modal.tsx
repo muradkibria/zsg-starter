@@ -1,5 +1,5 @@
 // A small in-page dialog (never the browser's own), for things the shared
-// confirm can't hold: a password shown once, or a typed confirmation.
+// confirm can't hold: a code shown once, or a typed confirmation.
 
 import type { ReactNode } from "react";
 import { Dialog } from "@/components/overlay";

@@ -18,8 +18,8 @@ export interface SessionUser {
 }
 
 export interface LoginRequest {
-  email: string;
-  password: string;
+  /** The person's own six-digit sign-in code */
+  code: string;
 }
 
 // ── Bags ──────────────────────────────────────────────────────────────────────

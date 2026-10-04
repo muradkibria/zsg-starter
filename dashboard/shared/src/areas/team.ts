@@ -1,4 +1,4 @@
-// Contracts for the team area: dashboard logins, roles and passwords.
+// Contracts for the team area: dashboard logins, roles and sign-in codes.
 
 import type { Permission, Role } from "../status";
 
@@ -8,6 +8,8 @@ export interface TeamMember {
   email: string;
   role: Role;
   disabled: boolean;
+  /** Whether they have a sign-in code; without one they can't sign in */
+  hasCode: boolean;
   /** ISO time the login was created */
   created: string;
   /** ISO time of the last sign-in (from the audit log), if any */
@@ -28,19 +30,14 @@ export interface TeamPatch {
   disabled?: boolean;
 }
 
-/** POST /team and POST /team/:id/reset-password. The password is shown once and never stored in plain text. */
-export interface TeamPasswordResult {
+/** POST /team, POST /team/:id/new-code and POST /team/me/new-code. The code is shown once and never logged. */
+export interface TeamCodeResult {
   member: TeamMember;
-  tempPassword: string;
+  code: string;
 }
 
-/** POST /team/me/password */
-export interface ChangePasswordRequest {
-  currentPassword: string;
-  newPassword: string;
-}
-
-export const PASSWORD_MIN_LENGTH = 10;
+/** Everyone signs in with their own six-digit code. */
+export const isSignInCode = (s: string): boolean => /^\d{6}$/.test(s);
 
 export const ROLES: Role[] = ["owner", "ops", "sales", "viewer"];
 
