@@ -1,2 +1,9 @@
 .DS_Store
 .env
+
+# PocketBase: the binary is platform-specific and downloaded on first use (~31 MB);
+# pb_data holds the real fleet, rider and location records, uploaded files and backups.
+pocketbase/pocketbase
+pocketbase/*.zip
+pocketbase/pb_data/
+pocketbase/node_modules/

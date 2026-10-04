@@ -8,9 +8,11 @@
 # (from pocketbase/: POCKETBASE_URL=… npm run setup). This server refuses to start
 # against a schema that's missing anything it relies on, rather than lose data.
 #
-# Environment: POCKETBASE_URL, POCKETBASE_EMAIL, POCKETBASE_PASSWORD, SESSION_SECRET,
-# COLORLIGHT_USERNAME, COLORLIGHT_PASSWORD, COOKIE_SECURE=true (behind HTTPS), and
-# OWNER_EMAIL / OWNER_PASSWORD for the first login. See .env.example for the rest.
+# Environment: the five variables in the repo's .env.example (POCKETBASE_URL,
+# POCKETBASE_EMAIL, POCKETBASE_PASSWORD, COLORLIGHT_USERNAME, COLORLIGHT_PASSWORD),
+# the same set the PocketBase service takes, so a host can share one copy between
+# them. It listens on the host's PORT, and session cookies are marked Secure when
+# the request came over HTTPS.
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./

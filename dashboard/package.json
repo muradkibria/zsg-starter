@@ -1,0 +1,33 @@
+{
+  "name": "digilite-hub",
+  "private": true,
+  "version": "0.1.0",
+  "description": "DigiLite Hub — fleet, rider and ad management for DigiLite LED bags",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "setup:schema": "npm --prefix ../pocketbase run setup --",
+    "dev": "concurrently -n db,api,web -c blue,green,magenta \"npm:dev:db\" \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:db": "node scripts/pocketbase.mjs serve",
+    "dev:api": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w web && npm run build -w server",
+    "start": "concurrently -n db,api -c blue,green \"node scripts/pocketbase.mjs serve\" \"npm run start -w server\"",
+    "test": "npm run test -w server",
+    "check": "npm run check -w shared && npm run check -w server && npm run check -w web",
+    "seed:demo": "npm run seed:demo -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "playwright-core": "^1.63.0",
+    "typescript": "~5.9.3"
+  }
+}
