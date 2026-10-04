@@ -81,7 +81,7 @@ export function RouteTimeline({ route, compact, playing }: { route: RouteRespons
                 className="absolute inset-y-0 truncate rounded border border-[#c9d3ea] bg-info-bg px-1.5 text-[10px] leading-[14px] font-bold text-info-ink"
                 style={{ left: `${pos(route.summary.first)}%`, width: `${width(route.summary.first, route.summary.last)}%` }}
               >
-                {playing ?? route.playing ?? "Loop"} (as the bag reports now)
+                {playing ?? route.playing ?? "Loop"}
               </div>
             )}
           </div>
