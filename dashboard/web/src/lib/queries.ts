@@ -14,6 +14,7 @@ import type {
   LiveBag,
   LiveEvent,
   LiveResponse,
+  OnScreenResponse,
   RouteResponse,
   SearchResult,
   SettingsDto,
@@ -38,6 +39,10 @@ export const useFleet = () => useQuery({ queryKey: qk.fleet, queryFn: () => api.
 
 export const useLiveBags = () =>
   useQuery({ queryKey: qk.live, queryFn: () => api.get<LiveResponse>("/fleet/live"), refetchInterval: 120_000 });
+
+/** Each bag's loop, ad by ad, for the map's ads layer (fetched only while it's on). */
+export const useOnScreen = (enabled: boolean) =>
+  useQuery({ queryKey: ["fleet-on-screen"], queryFn: () => api.get<OnScreenResponse>("/fleet/on-screen"), enabled, staleTime: 60_000, refetchInterval: 120_000 });
 
 export const useBags = () => useQuery({ queryKey: qk.bags, queryFn: () => api.get<BagSummary[]>("/bags"), refetchInterval: 60_000 });
 

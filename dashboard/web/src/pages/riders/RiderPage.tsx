@@ -11,6 +11,8 @@ import { useAuth } from "@/lib/auth";
 import { useSettings } from "@/lib/queries";
 import { useFeedback } from "@/components/feedback";
 import { RouteMap } from "@/components/route/RouteMap";
+import { RouteTimeline } from "@/components/route/RouteTimeline";
+import { useReplay } from "@/components/route/useReplay";
 import { Avatar, Button, Card, CardHeader, EmptyState, ErrorState, LinkButton, Page, Spinner, Stat, StatusLabel, Textarea } from "@/components/ui";
 import { dayLabel, formatDuration, hours, km, pct, shortDate, time, when } from "@/lib/format";
 import { useRider, useRiderCoverage, useRiderPerformance, useUpdateRider } from "./api";
@@ -71,6 +73,7 @@ function RiderView({ r }: { r: RiderDetail }) {
   const everCarried = r.stints.some((st) => Date.parse(st.start) <= Date.now());
   const perf = useRiderPerformance(everCarried ? r.id : null, 14);
   const cov = useRiderCoverage(everCarried ? r.id : null, 14);
+  const replay = useReplay(cov.data?.last);
   const [editing, setEditing] = useState(false);
   const [giving, setGiving] = useState(false);
   const update = useUpdateRider(r.id);
@@ -184,15 +187,20 @@ function RiderView({ r }: { r: RiderDetail }) {
           </div>
         )}
         {cov.data && (cov.data.lines.length || cov.data.last) ? (
-          <RouteMap route={cov.data.last} extraLines={cov.data.lines} className="absolute inset-0" />
+          <RouteMap route={cov.data.last} extraLines={cov.data.lines} replay={replay} className="absolute inset-0" />
         ) : cov.data ? (
           <EmptyState title="No routes in the last 2 weeks" body={r.bag ? "Nothing was recorded while they carried the bag." : "They haven't carried a bag in this time."} />
         ) : null}
       </div>
       {cov.data?.last && (
-        <p className="m-0 mt-2 text-xs text-muted">
-          Bold: {dayWord(cov.data.last.day ?? "")} on {cov.data.last.bagName}, with stops and signal gaps. Faint: their other days. Zones dashed.
-        </p>
+        <>
+          <p className="m-0 mt-2 text-xs text-muted">
+            Bold: {dayWord(cov.data.last.day ?? "")} on {cov.data.last.bagName}, with stops and signal gaps. Faint: their other days. Zones dashed.
+          </p>
+          <div className="mt-3 border-t border-rule-soft pt-3">
+            <RouteTimeline route={cov.data.last} compact replay={replay} />
+          </div>
+        </>
       )}
     </Card>
   );

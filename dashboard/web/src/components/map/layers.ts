@@ -1,7 +1,7 @@
 // Shared map layers: zones, a bag's route (with stops and signal gaps), fleet bags.
 
 import type { Map as MLMap } from "maplibre-gl";
-import { circleRing, type LiveBag, type RouteResponse, type ZoneDto } from "@digilite/shared";
+import { circleRing, replayAt, replayPathAt, type LiveBag, type ReplayTrack, type RouteResponse, type ZoneDto } from "@digilite/shared";
 import { formatDuration } from "@digilite/shared";
 import { shortName } from "@/lib/format";
 import { EMPTY, ensureLayer, setSource, setVisible } from "./MapView";
@@ -143,6 +143,42 @@ export function drawRoute(map: MLMap, route: RouteResponse | null | undefined) {
 
 export function clearRoute(map: MLMap) {
   for (const id of ["route", "route-gaps", "route-stops", "route-ends"]) setSource(map, id, EMPTY);
+  drawReplay(map, null, null);
+}
+
+/**
+ * Replaying a route at `at` (epoch ms): the route covered so far drawn over the
+ * whole route, which stays faint, and the bag where it was then. With `at` null
+ * the route goes back to normal. Returns where the bag was, if anywhere.
+ */
+export function drawReplay(map: MLMap, track: ReplayTrack | null | undefined, at: number | null): [number, number] | null {
+  const on = !!track && at !== null;
+  if (!on && !map.getSource("replay-path")) return null;
+  const path = on ? replayPathAt(track, at) : [];
+  const head = on ? replayAt(track, at) : null;
+  setSource(map, "replay-path", {
+    type: "FeatureCollection",
+    features: path.length ? [{ type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: path } }] : [],
+  });
+  setSource(map, "replay-head", {
+    type: "FeatureCollection",
+    features: head
+      ? [{ type: "Feature", properties: { icon: head.noSignal ? "replay-lost" : "selected" }, geometry: { type: "Point", coordinates: [head.lng, head.lat] } }]
+      : [],
+  });
+  ensureLayer(map, {
+    id: "replay-path",
+    type: "line",
+    source: "replay-path",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "#061b47", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2.6, 16, 6] },
+  });
+  ensureLayer(map, { id: "replay-head", type: "symbol", source: "replay-head", layout: { "icon-image": ["get", "icon"], "icon-allow-overlap": true } });
+  if (map.getLayer("route-line")) map.setPaintProperty("route-line", "line-opacity", on ? 0.2 : 1);
+  if (map.getLayer("route-casing")) map.setPaintProperty("route-casing", "line-opacity", on ? 0.55 : 1);
+  // Keep the start marker; the bag's own marker takes over from the end one.
+  if (map.getLayer("route-ends")) map.setFilter("route-ends", on ? ["==", ["get", "icon"], "start"] : null);
+  return head ? [head.lng, head.lat] : null;
 }
 
 export function routeCoords(route: RouteResponse | null | undefined): [number, number][] {

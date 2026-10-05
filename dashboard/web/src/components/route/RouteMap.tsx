@@ -6,6 +6,7 @@ import type { RouteResponse } from "@digilite/shared";
 import { useZones } from "@/lib/queries";
 import { MapView, boundsOf } from "../map/MapView";
 import { drawRoute, drawZones, routeCoords, zoneFeatures } from "../map/layers";
+import { useReplayOnMap, type Replay } from "./useReplay";
 
 export function RouteMap({
   route,
@@ -13,6 +14,7 @@ export function RouteMap({
   showZones = true,
   interactive = true,
   extraLines,
+  replay,
 }: {
   route: RouteResponse | null | undefined;
   className?: string;
@@ -20,6 +22,8 @@ export function RouteMap({
   interactive?: boolean;
   /** Extra faint lines (e.g. other days) as [lng, lat][][] */
   extraLines?: [number, number][][];
+  /** Draw this replay of `route` (from useReplay), following the bag while it plays */
+  replay?: Replay;
 }) {
   const [map, setMap] = useState<MLMap | null>(null);
   const zones = useZones();
@@ -50,6 +54,8 @@ export function RouteMap({
       fitted.current = key;
     }
   }, [map, route, zones.data, showZones, extraLines]);
+
+  useReplayOnMap(map, replay, () => ({ top: 24, bottom: 24, left: 24, right: 24 }));
 
   return <MapView onReady={setMap} className={className} interactive={interactive} ariaLabel="Route map" />;
 }

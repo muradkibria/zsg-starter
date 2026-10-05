@@ -202,6 +202,8 @@ export interface RouteResponse {
   day: string | null;
   /** Continuous pieces of track, simplified, as [lng, lat] */
   segments: [number, number][][];
+  /** When each point of `segments` was recorded (epoch seconds), same shape: for replaying the route */
+  times: number[][];
   gaps: RouteGap[];
   stops: RouteStop[];
   shifts: ShiftSummary[];
@@ -232,6 +234,30 @@ export interface BagDayDto {
 }
 
 // ── Fleet ─────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /fleet/on-screen: each bag's loop, ad by ad, for the map's ads layer. Bags
+ * report which loop they're playing, not which ad is on screen at a given second.
+ */
+export interface OnScreenResponse {
+  /** Bag id → the loop it's playing (bags playing a loop we don't know are left out) */
+  bags: Record<string, string>;
+  loops: Record<string, OnScreenLoop>;
+}
+
+export interface OnScreenLoop {
+  name: string;
+  /** In playing order; the loop then starts again from the top */
+  slots: OnScreenSlot[];
+}
+
+export interface OnScreenSlot {
+  creativeId: string;
+  name: string;
+  advertiser: string;
+  seconds: number;
+  thumbUrl: string | null;
+}
 export type WriteMode = "off" | "test" | "fleet";
 
 export interface AttentionItem {

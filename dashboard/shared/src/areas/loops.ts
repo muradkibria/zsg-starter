@@ -4,7 +4,7 @@
 // (a Colorlight "program"); a deployment is one attempt to send a loop to bags.
 // Names here are prefixed (Library*, Loop*) so they never clash with other areas.
 
-import type { WriteMode } from "../api";
+import type { OnScreenLoop, OnScreenSlot, WriteMode } from "../api";
 import type { BagStatus } from "../status";
 
 // ── Screen & upload rules ─────────────────────────────────────────────────────
@@ -528,3 +528,17 @@ export function loopAgeLabel(ageDays: number | null): string | null {
 
 /** The fleet loop is "stale" once it's more than 60 days old. */
 export const FLEET_LOOP_STALE_DAYS = 60;
+
+/**
+ * The slot a loop is on at `nowS` (epoch seconds), on one clock for every bag:
+ * bags report which loop they play, not where in it they are.
+ */
+export function loopSlotAt(loop: OnScreenLoop, nowS: number): OnScreenSlot {
+  const total = loop.slots.reduce((n, s) => n + s.seconds, 0);
+  let t = total > 0 ? nowS % total : 0;
+  for (const s of loop.slots) {
+    if (t < s.seconds) return s;
+    t -= s.seconds;
+  }
+  return loop.slots[0];
+}
