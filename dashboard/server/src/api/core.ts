@@ -24,6 +24,7 @@ import { recentCommands, runBagCommand } from "../domain/commands";
 import { fleetOverview, liveBags } from "../domain/fleet";
 import { getSettings, updateSettings } from "../domain/settings";
 import { bagDays, buildRoute, lastActiveDay, toBagDayDto } from "../domain/tracks";
+import { loadLoopsContext, onScreen } from "../domain/loops";
 import { listZones } from "../domain/zones";
 import { getAll, getFirst, pb, parsePbDate, q, type RecordModel } from "../pb";
 import { health } from "../jobs/state";
@@ -80,6 +81,11 @@ export function coreRouter(): Router {
   });
 
   r.get("/live", need("fleet.view"), liveStream);
+
+  /** What each bag's loop shows, for the map's ads layer. */
+  r.get("/fleet/on-screen", need("fleet.view"), async (_req, res) => {
+    res.json(onScreen(await loadLoopsContext()));
+  });
 
   // ── Bags ───────────────────────────────────────────────────────────────────
   r.get("/bags", need("fleet.view"), async (_req, res) => {

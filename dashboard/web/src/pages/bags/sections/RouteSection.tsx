@@ -6,6 +6,7 @@ import { ArrowUpRight, Route } from "lucide-react";
 import { todayLondon, type BagDetail, type RouteResponse } from "@digilite/shared";
 import { RouteMap } from "@/components/route/RouteMap";
 import { RouteTimeline } from "@/components/route/RouteTimeline";
+import { useReplay, type Replay } from "@/components/route/useReplay";
 import { EmptyState, Spinner } from "@/components/ui";
 import { dayLabel, formatDuration, km, longDay, time, when } from "@/lib/format";
 import { useDayRoute } from "../api";
@@ -16,6 +17,7 @@ export function RouteSection({ bag, className }: { bag: BagDetail; className?: s
   const isToday = day === todayLondon();
   const route = useDayRoute(bag.id, day, isToday);
   const r = route.data;
+  const replay = useReplay(r);
   const wide = useMediaQuery("(min-width: 768px)");
   const inProgress = isToday && bag.status === "now";
   const mapHref = `/map?bag=${bag.id}${day ? `&day=${day}` : ""}`;
@@ -49,7 +51,7 @@ export function RouteSection({ bag, className }: { bag: BagDetail; className?: s
       className={className}
     >
       <div className="relative h-[240px] overflow-hidden rounded-xl border border-rule bg-paper-3 md:h-[300px]">
-        <RouteMap route={r} interactive={false} className="absolute inset-0" />
+        <RouteMap route={r} interactive={false} replay={replay} className="absolute inset-0" />
         {/* The preview opens the full map for this day (a sibling overlay, so the map's own controls aren't nested in a link). */}
         <Link to={mapHref} aria-label={`Open ${bag.name}'s route for ${longDay(day)} on the fleet map`} className="absolute inset-0 z-[1] no-underline">
           {outLabel && r && (
@@ -71,12 +73,12 @@ export function RouteSection({ bag, className }: { bag: BagDetail; className?: s
         )}
       </div>
 
-      {r && first ? <RouteSummary route={r} inProgress={inProgress} compact={!wide} /> : !route.isLoading && <p className="m-0 text-sm text-muted">No movement recorded for this day.</p>}
+      {r && first ? <RouteSummary route={r} inProgress={inProgress} compact={!wide} replay={replay} /> : !route.isLoading && <p className="m-0 text-sm text-muted">No movement recorded for this day.</p>}
     </Section>
   );
 }
 
-function RouteSummary({ route: r, inProgress, compact }: { route: RouteResponse; inProgress: boolean; compact: boolean }) {
+function RouteSummary({ route: r, inProgress, compact, replay }: { route: RouteResponse; inProgress: boolean; compact: boolean; replay: Replay }) {
   const s = r.summary;
   const riders = [...new Set(r.shifts.map((x) => x.riderName).filter((n): n is string => !!n))];
   return (
@@ -104,7 +106,7 @@ function RouteSummary({ route: r, inProgress, compact }: { route: RouteResponse;
         </p>
       </div>
       <div className="border-t border-rule-soft pt-3">
-        <RouteTimeline route={r} compact={compact} />
+        <RouteTimeline route={r} compact={compact} replay={replay} />
       </div>
     </>
   );

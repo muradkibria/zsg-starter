@@ -33,6 +33,7 @@ import {
   type LoopDiffItem,
   type LoopItem,
   type LoopItemInput,
+  type OnScreenResponse,
   type LoopListItem,
   type LoopPublishRequest,
   type LoopPublishResult,
@@ -363,6 +364,29 @@ function bagRef(b: RecordModel, now: Date): LoopBagRef {
 }
 
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, "en", { numeric: true });
+
+/** Each bag's loop, ad by ad, for the map's ads layer (only bags whose loop we know). */
+export function onScreen(ctx: LoopsContext): OnScreenResponse {
+  const out: OnScreenResponse = { bags: {}, loops: {} };
+  for (const bag of ctx.activeBags) {
+    const loop = ctx.playingLoop.get(bag.id);
+    if (!loop) continue;
+    out.bags[bag.id] = loop.id;
+    if (!out.loops[loop.id]) {
+      out.loops[loop.id] = {
+        name: loop.name,
+        slots: toLoopItems(ctx, loopItemsOf(loop)).map((i) => ({
+          creativeId: i.creativeId,
+          name: i.name,
+          advertiser: i.advertiser,
+          seconds: i.seconds,
+          thumbUrl: i.thumbUrl,
+        })),
+      };
+    }
+  }
+  return out;
+}
 
 export function toLoopListItem(ctx: LoopsContext, loop: RecordModel, last?: LoopDeploymentBrief | null): LoopListItem {
   const items = toLoopItems(ctx, loopItemsOf(loop));

@@ -2,7 +2,7 @@
 
 The admin dashboard for DigiLite's LED bags: where every bag is, who's carrying it and what it's showing. It covers routes, rider records and pay, ads and loops, schedules and brightness, campaigns and client reports.
 
-- **The map is home.** Toggle bags by status, pick one to see only its route, stops, signal gaps and zones.
+- **The map is home.** Toggle bags by status, pick one to see only its route, stops, signal gaps and zones, and replay its day: drag along the timeline (or press play) and the route draws itself up to that moment, the bag gliding from one GPS fix to the next (also on the bag and rider pages). "Ads" shows beside each bag that's out now the ads its loop is playing, in turn (bags report the loop, not the exact ad on screen).
 - **The bag is the asset; riders are contractors.** Hours, routes and pay come from the bag's data within each rider's assignment dates.
 - **Colorlight is the data source; PocketBase is the record.** Every bag's status, location, ad plays, ads and loops come from Colorlight, the only data source for now, and its sync is a core part of the server. The Hub records everything it receives in PocketBase and keeps it permanently, so every screen reads its own records through its own API, and they stand even if Colorlight later changes or drops something.
 - **Changes to bags are gated.** They are dry runs by default, and only the test bag can receive real changes until the owner opens up the fleet.

@@ -103,6 +103,50 @@ export function simplifyLine(coords: [number, number][], toleranceM: number): [n
   return coords.filter((_, i) => keep[i]);
 }
 
+/**
+ * Simplify a timed track, keeping its timing: Ramer–Douglas–Peucker on the
+ * synchronised distance (how far each fix is from where a steady pace between the
+ * kept fixes would put it at that moment). So a bag stopped halfway along a
+ * straight road keeps that stop, which plain RDP would drop. Spatially the result
+ * is still within `toleranceM` of every fix. Returns the indexes kept.
+ */
+export function simplifyTrack(points: { lng: number; lat: number; t: number }[], toleranceM: number): number[] {
+  const n = points.length;
+  if (n <= 2) return points.map((_, i) => i);
+  const kx = 111320 * Math.cos(toRad(points[0].lat));
+  const ky = 110540;
+  const keep = new Uint8Array(n);
+  keep[0] = keep[n - 1] = 1;
+  const stack: [number, number][] = [[0, n - 1]];
+  const tol2 = toleranceM * toleranceM;
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    const pa = points[a];
+    const pb = points[b];
+    const dt = pb.t - pa.t;
+    let maxD = -1;
+    let idx = -1;
+    for (let i = a + 1; i < b; i++) {
+      const p = points[i];
+      const f = dt > 0 ? (p.t - pa.t) / dt : 0;
+      const ex = (pa.lng + f * (pb.lng - pa.lng) - p.lng) * kx;
+      const ey = (pa.lat + f * (pb.lat - pa.lat) - p.lat) * ky;
+      const d2 = ex * ex + ey * ey;
+      if (d2 > maxD) {
+        maxD = d2;
+        idx = i;
+      }
+    }
+    if (maxD > tol2 && idx > 0) {
+      keep[idx] = 1;
+      stack.push([a, idx], [idx, b]);
+    }
+  }
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push(i);
+  return out;
+}
+
 export function bbox(coords: [number, number][]): [number, number, number, number] | null {
   if (!coords.length) return null;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;

@@ -52,6 +52,11 @@ export function addMapIcons(map: MLMap) {
     circle(c, s / 2, s / 2, 20, "#061b47", undefined, 0, 0.14);
     circle(c, s / 2, s / 2, 9.5, "#061b47", "#ffffff", 3.2);
   }));
+  // Replaying, during a signal gap: the last fix before it, greyed.
+  add("replay-lost", draw(44, (c, s) => {
+    circle(c, s / 2, s / 2, 20, "#8e8778", undefined, 0, 0.16);
+    circle(c, s / 2, s / 2, 9.5, "#8e8778", "#ffffff", 3.2);
+  }));
   add("start", draw(20, (c, s) => circle(c, s / 2, s / 2, 6, "#ffffff", "#061b47", 3.2)));
   add("stop", draw(34, (c, s) => {
     circle(c, s / 2, s / 2, 13, "#b7791f", undefined, 0, 0.2);

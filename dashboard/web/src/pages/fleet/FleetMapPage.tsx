@@ -8,10 +8,12 @@ import type { Map as MLMap, MapLayerMouseEvent } from "maplibre-gl";
 import clsx from "clsx";
 import { AlertTriangle, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { STATUS_LABEL, STATUS_ORDER, type BagStatus, type LiveBag } from "@digilite/shared";
-import { useBag, useBagDays, useFleet, useLiveBags, useRoute, useZones } from "@/lib/queries";
+import { useBag, useBagDays, useFleet, useLiveBags, useOnScreen, useRoute, useZones } from "@/lib/queries";
+import { AdPins } from "@/components/map/adPins";
 import { MapView, boundsOf, setVisible } from "@/components/map/MapView";
 import { clearRoute, drawBags, drawRoute, drawZones, routeCoords, zoneFeatures } from "@/components/map/layers";
 import { RouteTimeline } from "@/components/route/RouteTimeline";
+import { useReplay, useReplayOnMap, type Replay } from "@/components/route/useReplay";
 import { SearchBox } from "@/components/SearchBox";
 import { Avatar, buttonClass, ErrorState, Pill, Spinner, StatusIcon } from "@/components/ui";
 import { dayLabel, formatDuration, km, pct, time, when } from "@/lib/format";
@@ -52,8 +54,33 @@ function useMapState() {
   };
 }
 
+/** A yes/no remembered in this browser (if it lets us store anything). */
+function useStoredFlag(key: string): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(() => {
+    try {
+      return localStorage.getItem(key) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const set = (v: boolean) => {
+    setOn(v);
+    try {
+      localStorage.setItem(key, v ? "1" : "0");
+    } catch {
+      // private browsing: it just won't be remembered
+    }
+  };
+  return [on, set];
+}
+
 export default function FleetMapPage() {
   const s = useMapState();
+  const [adsOn, setAdsOn] = useStoredFlag("fleet-map.ads");
+  const onScreen = useOnScreen(adsOn);
+  const pins = useRef<AdPins | null>(null);
+  const selectRef = useRef(s.select);
+  selectRef.current = s.select;
   const nav = useNavigate();
   const onPick = (href: string) => {
     const m = href.match(/^\/map\?bag=(.+)$/);
@@ -64,6 +91,7 @@ export default function FleetMapPage() {
   const live = useLiveBags();
   const zones = useZones();
   const route = useRoute(s.bagId, s.day);
+  const replay = useReplay(s.bagId ? route.data : null);
   const [map, setMap] = useState<MLMap | null>(null);
   const bags = live.data?.bags ?? [];
   const selected = bags.find((b) => b.id === s.bagId) ?? null;
@@ -87,7 +115,11 @@ export default function FleetMapPage() {
         if (id) s.select(id);
       });
       map.on("mouseenter", "bags", () => (map.getCanvas().style.cursor = "pointer"));
-      map.on("mouseleave", "bags", () => (map.getCanvas().style.cursor = ""));
+      map.on("mousemove", "bags", (e: MapLayerMouseEvent) => pins.current?.hover((e.features?.[0]?.properties?.id as string | undefined) ?? null));
+      map.on("mouseleave", "bags", () => {
+        map.getCanvas().style.cursor = "";
+        pins.current?.hover(null);
+      });
     }
     if (!fittedFleet.current && !s.bagId && visible.length) {
       const b = boundsOf(visible.map((v) => [v.position!.lng, v.position!.lat]));
@@ -96,6 +128,14 @@ export default function FleetMapPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, visible, s.bagId]);
+
+  // Ads beside the bags that are out now (switched on in the header; hidden while a bag is picked).
+  useEffect(() => {
+    if (!map) return;
+    pins.current ??= new AdPins(map, (id) => selectRef.current(id));
+    pins.current.update(adsOn && !s.bagId ? visible : [], onScreen.data);
+  }, [map, adsOn, s.bagId, visible, onScreen.data]);
+  useEffect(() => () => pins.current?.destroy(), []);
 
   // Zones: all zones when switched on; with a bag selected, only those it passed through.
   useEffect(() => {
@@ -130,6 +170,12 @@ export default function FleetMapPage() {
     }
   }, [map, s.bagId, route.data]);
 
+  // Replaying the selected bag's day: drawn every frame, the camera drifting after the
+  // bag while it plays (clear of the card on desktop, the sheet on phones).
+  useReplayOnMap(map, replay, () =>
+    window.innerWidth < 768 ? { top: 90, bottom: 330, left: 30, right: 30 } : { top: 40, bottom: 40, left: 360, right: 50 },
+  );
+
   const counts = fleet.data?.counts;
   const attention = fleet.data?.attention.filter((a) => a.severity !== "info") ?? [];
 
@@ -149,6 +195,17 @@ export default function FleetMapPage() {
           )}
         >
           Zones
+        </button>
+        <button
+          aria-pressed={adsOn}
+          onClick={() => setAdsOn(!adsOn)}
+          title="Show the ads beside each bag that's out now. Bags report the loop they're playing, not the ad on screen this second, so each shows its loop's ads in turn."
+          className={clsx(
+            "h-8 rounded-full border px-3 text-xs font-semibold",
+            adsOn ? "border-navy bg-navy text-white" : "border-line bg-white text-ink",
+          )}
+        >
+          Ads
         </button>
         <SearchBox className="w-[320px]" onPick={onPick} />
       </header>
@@ -176,6 +233,16 @@ export default function FleetMapPage() {
                   <span className="num opacity-80">{counts?.[st] ?? "–"}</span>
                 </button>
               ))}
+              <button
+                aria-pressed={adsOn}
+                onClick={() => setAdsOn(!adsOn)}
+                className={clsx(
+                  "flex h-9 shrink-0 items-center rounded-full border px-3 text-[13px] font-semibold shadow-sm",
+                  adsOn ? "border-navy bg-navy text-white" : "border-line bg-white/95 text-ink",
+                )}
+              >
+                Ads
+              </button>
             </div>
           )}
         </div>
@@ -227,7 +294,7 @@ export default function FleetMapPage() {
           <div className="rounded-t-[20px] border-t border-rule bg-white px-4 pt-2 pb-3 shadow-[0_-8px_24px_rgb(16_24_43/0.08)]">
             <div className="mx-auto mb-2 h-1 w-9 rounded-full bg-line" />
             {s.bagId ? (
-              <MobileSelected bag={selected} bagId={s.bagId} day={s.day} setDay={s.setDay} onClose={() => s.select(null)} />
+              <MobileSelected bag={selected} bagId={s.bagId} day={s.day} setDay={s.setDay} onClose={() => s.select(null)} replay={replay} />
             ) : (
               <BagStrip bags={visible} onPick={s.select} compact />
             )}
@@ -238,7 +305,7 @@ export default function FleetMapPage() {
       {/* Desktop bottom panel */}
       <section className="hidden shrink-0 border-t border-rule bg-white px-5 py-3.5 md:block" style={{ minHeight: 172 }}>
         {s.bagId ? (
-          <SelectedPanel bagId={s.bagId} day={s.day} setDay={s.setDay} bag={selected} />
+          <SelectedPanel bagId={s.bagId} day={s.day} setDay={s.setDay} bag={selected} replay={replay} />
         ) : (
           <BagStrip bags={visible} onPick={s.select} />
         )}
@@ -394,7 +461,19 @@ function DayPicker({ bagId, day, setDay, current }: { bagId: string; day: string
   );
 }
 
-function SelectedPanel({ bagId, day, setDay, bag }: { bagId: string; day: string | null; setDay: (d: string | null) => void; bag: LiveBag | null }) {
+function SelectedPanel({
+  bagId,
+  day,
+  setDay,
+  bag,
+  replay,
+}: {
+  bagId: string;
+  day: string | null;
+  setDay: (d: string | null) => void;
+  bag: LiveBag | null;
+  replay: Replay;
+}) {
   const route = useRoute(bagId, day);
   const r = route.data;
   return (
@@ -428,7 +507,7 @@ function SelectedPanel({ bagId, day, setDay, bag }: { bagId: string; day: string
           <p className="m-0 text-sm text-muted">No movement recorded for this day.</p>
         )}
       </div>
-      <div className="min-w-0 flex-1 pt-1">{r && <RouteTimeline route={r} playing={bag?.playing} />}</div>
+      <div className="min-w-0 flex-1 pt-1">{r && <RouteTimeline route={r} playing={bag?.playing} replay={replay} />}</div>
     </div>
   );
 }
@@ -442,7 +521,21 @@ function MiniStat({ label, value, amber }: { label: string; value: string; amber
   );
 }
 
-function MobileSelected({ bag, bagId, day, setDay, onClose }: { bag: LiveBag | null; bagId: string; day: string | null; setDay: (d: string | null) => void; onClose: () => void }) {
+function MobileSelected({
+  bag,
+  bagId,
+  day,
+  setDay,
+  onClose,
+  replay,
+}: {
+  bag: LiveBag | null;
+  bagId: string;
+  day: string | null;
+  setDay: (d: string | null) => void;
+  onClose: () => void;
+  replay: Replay;
+}) {
   const route = useRoute(bagId, day);
   const r = route.data;
   return (
@@ -465,7 +558,7 @@ function MobileSelected({ bag, bagId, day, setDay, onClose }: { bag: LiveBag | n
             <MiniStat label="Ridden" value={km(r.summary.km)} />
             <MiniStat label="Stopped" value={formatDuration(r.summary.stoppedSeconds)} amber={r.summary.stoppedSeconds > 0} />
           </div>
-          <RouteTimeline route={r} compact />
+          <RouteTimeline route={r} compact replay={replay} />
         </>
       )}
       <div className="flex gap-2">

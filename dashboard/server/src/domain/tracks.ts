@@ -6,6 +6,7 @@ import {
   GPS_INTERVAL_MS,
   londonDayBounds,
   simplifyLine,
+  simplifyTrack,
   sortPoints,
   spreadLatePoints,
   type BagDayDto,
@@ -152,17 +153,25 @@ export async function buildRoute(bag: RecordModel, from: Date, to: Date, day: st
   const pts = await loadPlacedPoints(bag.id, from, to, gpsIntervalMs(bag));
   const a = analyseTrack(pts, zones, cfg);
 
+  // Pieces of track split at signal gaps: straight lines between GPS fixes,
+  // simplified keeping their timing (for replay).
   const gapMs = cfg.signalGapMin * 60000;
   const segments: [number, number][][] = [];
-  let cur: [number, number][] = [];
-  for (let i = 0; i < pts.length; i++) {
-    if (i > 0 && pts[i].t - pts[i - 1].t > gapMs) {
-      if (cur.length > 1) segments.push(simplifyLine(cur, 3));
-      cur = [];
+  const times: number[][] = [];
+  let cur: TrackPoint[] = [];
+  const flush = () => {
+    if (cur.length > 1) {
+      const kept = simplifyTrack(cur, 3);
+      segments.push(kept.map((i) => [cur[i].lng, cur[i].lat]));
+      times.push(kept.map((i) => Math.round(cur[i].t / 1000)));
     }
-    cur.push([pts[i].lng, pts[i].lat]);
+    cur = [];
+  };
+  for (let i = 0; i < pts.length; i++) {
+    if (i > 0 && pts[i].t - pts[i - 1].t > gapMs) flush();
+    cur.push(pts[i]);
   }
-  if (cur.length > 1) segments.push(simplifyLine(cur, 3));
+  flush();
 
   const iso = (t: number) => new Date(t).toISOString();
   return {
@@ -172,6 +181,7 @@ export async function buildRoute(bag: RecordModel, from: Date, to: Date, day: st
     to: to.toISOString(),
     day,
     segments,
+    times,
     gaps: a.gaps.map((g) => ({ start: iso(g.start), end: iso(g.end), seconds: g.seconds, from: g.from, to: g.to })),
     stops: a.stops.map((s) => ({ lat: s.lat, lng: s.lng, start: iso(s.start), end: iso(s.end), seconds: s.seconds })),
     shifts: await attributeShifts(bag.id, a),

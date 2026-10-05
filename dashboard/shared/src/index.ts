@@ -1,5 +1,6 @@
 export * from "./time";
 export * from "./geo";
+export * from "./replay";
 export * from "./analytics";
 export * from "./status";
 export * from "./api";
