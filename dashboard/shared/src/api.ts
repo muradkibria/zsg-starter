@@ -194,18 +194,6 @@ export interface RouteSummary {
   km: number;
 }
 
-/** A stretch of a route inside a TfL station's catchment while the screen was on. */
-export interface StationVisit {
-  key: string;
-  name: string;
-  lat: number;
-  lng: number;
-  start: string;
-  end: string;
-  /** Estimated impressions (all ads) */
-  impressions: number;
-}
-
 export interface RouteResponse {
   bagId: string;
   bagName: string;
@@ -216,10 +204,8 @@ export interface RouteResponse {
   segments: [number, number][][];
   /** When each point of `segments` was recorded (epoch seconds), same shape: for replaying the route */
   times: number[][];
-  /** Time near TfL stations with the screen on, and the estimated impressions there */
-  stationVisits: StationVisit[];
-  /** The station catchment radius used, metres */
-  catchmentM: number;
+  /** Estimated impressions along the route (screen on), in bins of `binS` seconds from `start` (epoch ms) */
+  impressions: { start: number; binS: number; values: number[] };
   gaps: RouteGap[];
   stops: RouteStop[];
   shifts: ShiftSummary[];
@@ -352,11 +338,13 @@ export interface SettingsDto {
   payRate: string;
   payMinHours: number;
   paySignalGaps: boolean;
-  /** Impressions: station catchment radius, metres (an assumption to calibrate) */
-  impressionsRadiusM: number;
-  /** Impressions: share of station users passing the bag's street, % */
-  impressionsStreetPct: number;
-  /** Impressions: share of those passing with a reasonable chance to see the screen, % */
+  /** Impressions (assumptions to calibrate): how far a station's busyness spreads, metres */
+  impressionsSpreadM: number;
+  /** Impressions: pedestrians passing a point per hour, per station movement that hour */
+  impressionsFlowPerTap: number;
+  /** Impressions: pedestrians per hour on any street */
+  impressionsMinFlow: number;
+  /** Impressions: share of the people met with a reasonable chance to see the screen, % */
   impressionsVisibilityPct: number;
 }
 

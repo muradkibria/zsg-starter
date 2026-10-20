@@ -98,8 +98,9 @@ const SETTING_LABEL: Record<string, { label: string; unit?: string }> = {
   payRate: { label: "Pay rate" },
   payMinHours: { label: "Minimum hours to qualify", unit: " h" },
   paySignalGaps: { label: "Pay for signal-gap time" },
-  impressionsRadiusM: { label: "Impressions: station catchment", unit: " m" },
-  impressionsStreetPct: { label: "Impressions: station users passing the street", unit: "%" },
+  impressionsSpreadM: { label: "Impressions: busyness spread around a station", unit: " m" },
+  impressionsFlowPerTap: { label: "Impressions: street flow per station movement" },
+  impressionsMinFlow: { label: "Impressions: minimum street flow", unit: " people/hour" },
   impressionsVisibilityPct: { label: "Impressions: visibility", unit: "%" },
   retention: { label: "Data retention" },
 };

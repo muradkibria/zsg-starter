@@ -6,7 +6,7 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from "react";
 import clsx from "clsx";
 import { Pause, Play, X } from "lucide-react";
-import type { RouteResponse } from "@digilite/shared";
+import { roundEstimate, type RouteResponse } from "@digilite/shared";
 import { londonHour } from "@digilite/shared";
 import { time } from "@/lib/format";
 import { impressionsUntil, type Replay } from "./useReplay";
@@ -95,9 +95,10 @@ export function RouteTimeline({
   const stateNow = [moving === "moving" ? "Moving" : moving === "stopped" ? "Stopped" : moving === "gap" ? "No signal" : null, zoneNow]
     .filter(Boolean)
     .join(" · ");
-  const visits = route.stationVisits ?? [];
-  const seen = at === null ? null : impressionsUntil(visits, at);
-  const impressionsNow = seen && visits.length ? `${seen.near ? `near ${seen.near.name} · ` : ""}≈ ${Math.round(seen.total).toLocaleString("en-GB")} impressions so far` : "";
+  const bins = route.impressions;
+  const hasImpressions = !!bins && bins.values.some((v) => v > 0);
+  const maxBin = hasImpressions ? Math.max(...bins.values) : 1;
+  const impressionsNow = at !== null && hasImpressions ? `≈ ${roundEstimate(impressionsUntil(bins, at)).toLocaleString("en-GB")} impressions so far` : "";
 
   return (
     <div className="flex flex-col gap-2" aria-label="Timeline">
@@ -188,20 +189,24 @@ export function RouteTimeline({
             ))}
           </div>
         </div>
-        {visits.length > 0 && (
+        {hasImpressions && (
           <div className="flex items-center gap-3">
-            <span className={clsx("shrink-0 text-[11px] text-muted", labelW)} title="Time within a TfL station's catchment with the screen on">
-              Stations
-            </span>
+            <span className={clsx("shrink-0 text-[11px] text-muted", labelW)}>Impressions</span>
             <div className="relative h-4 flex-1 overflow-hidden rounded bg-paper">
-              {visits.map((v, i) => (
-                <div
-                  key={i}
-                  title={`${v.name} ${time(v.start)}–${time(v.end)} · ≈ ${Math.round(v.impressions).toLocaleString("en-GB")} estimated impressions`}
-                  className="absolute inset-y-0 border-l border-white bg-[#e8b26a]"
-                  style={{ left: `${pos(v.start)}%`, width: `${width(v.start, v.end)}%` }}
-                />
-              ))}
+              {bins.values.map((v, i) =>
+                v > 0 ? (
+                  <div
+                    key={i}
+                    title={`${time(bins.start + i * bins.binS * 1000)} · ≈ ${roundEstimate(v).toLocaleString("en-GB")} estimated impressions`}
+                    className="absolute inset-y-0 bg-[#c26a00]"
+                    style={{
+                      left: `${((bins.start + i * bins.binS * 1000 - a) / span) * 100}%`,
+                      width: `${Math.max(0.35, ((bins.binS * 1000) / span) * 100)}%`,
+                      opacity: 0.15 + 0.85 * Math.sqrt(v / maxBin),
+                    }}
+                  />
+                ) : null,
+              )}
             </div>
           </div>
         )}
@@ -256,7 +261,7 @@ export function RouteTimeline({
           <Legend color="#b7791f" label="Stopped 15 min+" />
           <Legend pattern label="No signal" />
           <Legend color="#dce3f3" label="In a zone" />
-          {visits.length > 0 && <Legend color="#e8b26a" label="Near a TfL station (estimated impressions)" />}
+          {hasImpressions && <Legend color="#c26a00" label="Estimated impressions (darker: more)" />}
         </div>
       )}
     </div>

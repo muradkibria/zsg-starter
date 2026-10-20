@@ -12,7 +12,6 @@ import {
   londonClock,
   type ImpressionsParams,
   type StationIndex,
-  type StationVisit,
   sortPoints,
   spreadLatePoints,
   type BagDayDto,
@@ -180,8 +179,13 @@ export async function bagDays(bagIds: string[] | null, fromDay: string, toDay: s
 
 // ── Routes (what the map draws) ───────────────────────────────────────────────
 
-/** Stretches near TfL stations while the screen was on, with their estimated impressions (all ads). */
-async function stationVisits(bagId: string, pts: TrackPoint[], from: Date, to: Date, params: ImpressionsParams): Promise<StationVisit[]> {
+const BIN_S = 300;
+
+/** Estimated impressions along a route (screen on, all ads), in 5-minute bins: for replay. */
+async function impressionBins(bagId: string, pts: TrackPoint[], from: Date, to: Date, params: ImpressionsParams): Promise<RouteResponse["impressions"]> {
+  const start = pts[0]?.t ?? from.getTime();
+  const empty = { start, binS: BIN_S, values: [] as number[] };
+  if (pts.length < 2) return empty;
   const rows = await getAll<RecordModel>("plays", {
     filter: `bag = ${q(bagId)} && hour >= ${q(pbDate(from))} && hour < ${q(pbDate(to))}`,
     fields: "hour,seconds",
@@ -192,21 +196,9 @@ async function stationVisits(bagId: string, pts: TrackPoint[], from: Date, to: D
     if (h !== undefined) onScreen.set(h, (onScreen.get(h) ?? 0) + (r.seconds || 0));
   }
   const parts = exposureParts(pts, await stationIndex(), (t) => Math.min(1, (onScreen.get(Math.floor(t / 3600_000) * 3600_000) ?? 0) / 3600), params);
-  const out: (StationVisit & { lastT: number })[] = [];
-  let cur: (StationVisit & { lastT: number }) | null = null;
-  for (const p of parts) {
-    if (!p.station) continue;
-    // A new visit when the station changes or after 5 minutes away.
-    if (!cur || cur.key !== p.station.key || p.t - cur.lastT > 5 * 60_000) {
-      if (cur) out.push(cur);
-      cur = { key: p.station.key, name: p.station.name, lat: p.station.lat, lng: p.station.lng, start: new Date(p.t).toISOString(), end: "", impressions: 0, lastT: p.t };
-    }
-    cur.lastT = p.t;
-    cur.end = new Date(p.t + Math.max(30, p.seconds) * 1000).toISOString();
-    cur.impressions += p.impressions;
-  }
-  if (cur) out.push(cur);
-  return out.map(({ lastT: _lastT, ...v }) => ({ ...v, impressions: Math.round(v.impressions * 10) / 10 }));
+  const values = Array.from({ length: Math.ceil((pts[pts.length - 1].t - start) / 1000 / BIN_S) + 1 }, () => 0);
+  for (const part of parts) values[Math.floor((part.t - start) / 1000 / BIN_S)] += part.impressions;
+  return { start, binS: BIN_S, values: values.map((v) => Math.round(v * 10) / 10) };
 }
 
 export async function buildRoute(bag: RecordModel, from: Date, to: Date, day: string | null): Promise<RouteResponse> {
@@ -239,8 +231,7 @@ export async function buildRoute(bag: RecordModel, from: Date, to: Date, day: st
   const iso = (t: number) => new Date(t).toISOString();
   const params = await impressionsParams();
   return {
-    stationVisits: await stationVisits(bag.id, pts, from, to, params),
-    catchmentM: params.radiusM,
+    impressions: await impressionBins(bag.id, pts, from, to, params),
     bagId: bag.id,
     bagName: bag.name,
     from: from.toISOString(),

@@ -24,8 +24,9 @@ export function toSettingsDto(r: RecordModel): SettingsDto {
     payRate: r.pay_rate || "",
     payMinHours: r.pay_min_hours || 0,
     paySignalGaps: !!r.pay_signal_gaps,
-    impressionsRadiusM: r.impressions_radius_m || DEFAULT_IMPRESSIONS.radiusM,
-    impressionsStreetPct: r.impressions_street_pct || DEFAULT_IMPRESSIONS.streetShare * 100,
+    impressionsSpreadM: r.impressions_spread_m || DEFAULT_IMPRESSIONS.spreadM,
+    impressionsFlowPerTap: r.impressions_flow_per_tap || DEFAULT_IMPRESSIONS.flowPerTap,
+    impressionsMinFlow: r.impressions_min_flow ?? DEFAULT_IMPRESSIONS.minFlow,
     impressionsVisibilityPct: r.impressions_visibility_pct || DEFAULT_IMPRESSIONS.visibility * 100,
   };
 }
@@ -48,8 +49,9 @@ export async function updateSettings(patch: Partial<SettingsDto>): Promise<Setti
   if (patch.payRate !== undefined) map.pay_rate = patch.payRate;
   if (patch.payMinHours !== undefined) map.pay_min_hours = patch.payMinHours;
   if (patch.paySignalGaps !== undefined) map.pay_signal_gaps = patch.paySignalGaps;
-  if (patch.impressionsRadiusM !== undefined) map.impressions_radius_m = patch.impressionsRadiusM;
-  if (patch.impressionsStreetPct !== undefined) map.impressions_street_pct = patch.impressionsStreetPct;
+  if (patch.impressionsSpreadM !== undefined) map.impressions_spread_m = patch.impressionsSpreadM;
+  if (patch.impressionsFlowPerTap !== undefined) map.impressions_flow_per_tap = patch.impressionsFlowPerTap;
+  if (patch.impressionsMinFlow !== undefined) map.impressions_min_flow = patch.impressionsMinFlow;
   if (patch.impressionsVisibilityPct !== undefined) map.impressions_visibility_pct = patch.impressionsVisibilityPct;
   const updated = await pb.collection("app_settings").update(rec.id, map);
   cache = { at: Date.now(), rec: updated };
@@ -70,5 +72,5 @@ export async function analyticsConfig(): Promise<AnalyticsConfig> {
 /** The impressions assumptions, as the model takes them. */
 export async function impressionsParams(): Promise<ImpressionsParams> {
   const s = await getSettings();
-  return { radiusM: s.impressionsRadiusM, streetShare: s.impressionsStreetPct / 100, visibility: s.impressionsVisibilityPct / 100 };
+  return { spreadM: s.impressionsSpreadM, flowPerTap: s.impressionsFlowPerTap, minFlow: s.impressionsMinFlow, visibility: s.impressionsVisibilityPct / 100 };
 }

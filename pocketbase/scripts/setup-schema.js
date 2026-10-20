@@ -457,8 +457,9 @@ const COLLECTIONS = [
       number("pay_min_hours"),
       bool("pay_signal_gaps"),
       // Estimated impressions: working assumptions, to be calibrated (shared/src/impressions.ts).
-      number("impressions_radius_m"),
-      number("impressions_street_pct"),
+      number("impressions_spread_m"),
+      number("impressions_flow_per_tap"),
+      number("impressions_min_flow"),
       number("impressions_visibility_pct"),
       created(),
       updated(),
@@ -514,8 +515,9 @@ const SETTINGS_ROW = {
   pay_rate: "",
   pay_min_hours: 0,
   pay_signal_gaps: false,
-  impressions_radius_m: 250,
-  impressions_street_pct: 25,
+  impressions_spread_m: 300,
+  impressions_flow_per_tap: 0.5,
+  impressions_min_flow: 100,
   impressions_visibility_pct: 10,
 };
 

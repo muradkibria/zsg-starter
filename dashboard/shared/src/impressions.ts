@@ -1,22 +1,23 @@
-// Estimated impressions from TfL station footfall. For each stretch of a bag's
-// track (between two GPS fixes, at most 60 s):
+// Estimated impressions for a screen on the move, using TfL station footfall as
+// a gauge of how busy each street is.
 //
-//   impressions = daily station movements (TfL entries + exits that day)
-//               × hourly traffic share (an estimated profile: TfL's file has daily totals only)
-//               × exposure duration as a fraction of an hour
-//               × station-to-street allocation
-//               × visibility factor
-//               × the advertiser's share of screen time
+//   1. How busy it is here, now: pedestrians passing a point per hour =
+//        minimum street flow
+//      + flow per station passenger × Σ nearby stations' movements that hour
+//        (TfL entries + exits that day × an estimated hourly share — TfL's file has
+//        daily totals only), each weighted by distance (a Gaussian, so busyness
+//        fades smoothly between stations instead of stopping at a catchment edge).
+//   2. Who the screen meets on each stretch of track (≤ 60 s between GPS fixes):
+//        people along the street it covers (flow ÷ walking speed × metres travelled)
+//      + people walking past it in that time (flow × seconds ÷ 3600; all of it
+//        when the bag is stopped).
+//   3. impressions = people met × visibility × the share of that time the screen
+//      was on (or showed one advertiser's ad).
 //
-// A stretch counts when the bag is inside a station's catchment (Haversine
-// distance ≤ the catchment radius). Where catchments overlap, only the nearest
-// station counts, so the same flow is never counted twice. TfL publishes about
-// a week behind: until a day is published, the same weekday of the latest week
-// it has stands in.
-//
-// The radius, allocation and visibility are working assumptions, set in
-// Settings and to be calibrated; they aren't measurements. Measured figures
-// (plays, time on screen, km) never depend on any of this.
+// TfL publishes about a week behind: until a day is published, the same weekday
+// of the latest week it has stands in. The spread, flow per passenger, minimum
+// flow and visibility are working assumptions (Settings → Impressions), to be
+// calibrated. Measured figures (plays, time on screen, km) never depend on this.
 
 import type { TrackPoint } from "./analytics";
 import { haversineMeters } from "./geo";
@@ -32,19 +33,23 @@ export interface FootfallStation {
 
 /** The working assumptions (Settings → Impressions). */
 export interface ImpressionsParams {
-  /** Station catchment radius, metres */
-  radiusM: number;
-  /** Share of a station's users who pass through the street where the bag is (0–1) */
-  streetShare: number;
-  /** Share of those passing who have a reasonable opportunity to see the screen (0–1) */
+  /** How far a station's busyness spreads (Gaussian σ), metres */
+  spreadM: number;
+  /** Pedestrians passing a point per hour, per station movement that hour at the station */
+  flowPerTap: number;
+  /** Pedestrians per hour on any street, however far from a station */
+  minFlow: number;
+  /** Share of the people met who have a reasonable chance to see the screen (0–1) */
   visibility: number;
 }
 
-/** Starting values for testing — assumptions, not measurements. */
-export const DEFAULT_IMPRESSIONS: ImpressionsParams = { radiusM: 250, streetShare: 0.25, visibility: 0.1 };
+/** Starting values — assumptions to calibrate, not measurements. */
+export const DEFAULT_IMPRESSIONS: ImpressionsParams = { spreadM: 300, flowPerTap: 0.5, minFlow: 100, visibility: 0.1 };
 
 /** Longest stretch between two GPS fixes that counts (longer is a gap). */
 export const MAX_STEP_S = 60;
+/** Walking pace, metres a second: turns a flow past a point into people per metre of street. */
+export const WALKING_MS = 1.3;
 
 // Estimated share of a station's daily movements in each London hour: commuter
 // peaks on weekdays, a broad midday-to-evening hump at weekends. TfL's daily file
@@ -90,21 +95,27 @@ export function indexStations(stations: FootfallStation[]): StationIndex {
   return { cells };
 }
 
-/** The nearest station within `radiusM` (Haversine), and how far. */
-export function nearestStation(index: StationIndex, lat: number, lng: number, radiusM: number): { station: FootfallStation; metres: number } | null {
+/**
+ * Pedestrians passing a point per hour: the minimum flow plus every station
+ * within 3 spreads, its movements that hour weighted by distance.
+ */
+export function areaFlow(index: StationIndex, lat: number, lng: number, c: { day: string; hour: number; weekend: boolean }, params: ImpressionsParams): number {
   const ci = Math.floor(lat / CELL_DEG);
   const cj = Math.floor(lng / CELL_DEG);
-  const reach = Math.max(1, Math.ceil(radiusM / 270));
-  let best: { station: FootfallStation; metres: number } | null = null;
+  const reachM = 3 * params.spreadM;
+  const reach = Math.max(1, Math.ceil(reachM / 270));
+  const hourShare = (c.weekend ? HOURLY_SHARE.weekend : HOURLY_SHARE.weekday)[c.hour];
+  const twoSigma2 = 2 * params.spreadM * params.spreadM;
+  let movements = 0;
   for (let i = ci - reach; i <= ci + reach; i++) {
     for (let j = cj - reach; j <= cj + reach; j++) {
       for (const s of index.cells.get(`${i}:${j}`) ?? []) {
         const m = haversineMeters(lat, lng, s.lat, s.lng);
-        if (m <= radiusM && (!best || m < best.metres)) best = { station: s, metres: m };
+        if (m <= reachM) movements += tapsOn(s, c.day) * hourShare * Math.exp((-m * m) / twoSigma2);
       }
     }
   }
-  return best;
+  return params.minFlow + params.flowPerTap * movements;
 }
 
 /** London day ("2026-09-28") and hour for a time, cheaply (the UTC offset is looked up once an hour). */
@@ -128,9 +139,11 @@ export interface ExposurePart {
   t: number;
   lat: number;
   lng: number;
+  /** Seconds counted (already weighted by the share) */
   seconds: number;
+  /** People met on the stretch (before visibility and share) */
+  met: number;
   impressions: number;
-  station: FootfallStation | null;
 }
 
 /**
@@ -148,18 +161,17 @@ export function exposureParts(
   const out: ExposurePart[] = [];
   for (let i = 0; i + 1 < points.length; i++) {
     const p = points[i];
-    const seconds = Math.min(MAX_STEP_S, (points[i + 1].t - p.t) / 1000);
-    if (seconds <= 0) continue;
+    const q = points[i + 1];
+    const gap = (q.t - p.t) / 1000;
+    if (gap <= 0) continue;
     const sh = share(p.t);
     if (sh <= 0) continue;
-    const near = nearestStation(index, p.lat, p.lng, params.radiusM);
-    let impressions = 0;
-    if (near) {
-      const c = clock(p.t);
-      const hourShare = (c.weekend ? HOURLY_SHARE.weekend : HOURLY_SHARE.weekday)[c.hour];
-      impressions = tapsOn(near.station, c.day) * hourShare * (seconds / 3600) * params.streetShare * params.visibility * sh;
-    }
-    out.push({ t: p.t, lat: p.lat, lng: p.lng, seconds: seconds * sh, impressions, station: near?.station ?? null });
+    const seconds = Math.min(MAX_STEP_S, gap);
+    // Over a signal gap we don't know the path: count the time, not the distance.
+    const metres = gap <= MAX_STEP_S ? haversineMeters(p.lat, p.lng, q.lat, q.lng) : 0;
+    const flow = areaFlow(index, p.lat, p.lng, clock(p.t), params);
+    const met = (flow / 3600 / WALKING_MS) * metres + (flow * seconds) / 3600;
+    out.push({ t: p.t, lat: p.lat, lng: p.lng, seconds: seconds * sh, met, impressions: met * params.visibility * sh });
   }
   return out;
 }

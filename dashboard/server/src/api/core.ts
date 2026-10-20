@@ -218,8 +218,9 @@ export function coreRouter(): Router {
       payRate: z.string().max(60),
       payMinHours: z.number().min(0).max(200),
       paySignalGaps: z.boolean(),
-      impressionsRadiusM: z.number().min(25).max(1000),
-      impressionsStreetPct: z.number().min(0).max(100),
+      impressionsSpreadM: z.number().min(50).max(2000),
+      impressionsFlowPerTap: z.number().min(0).max(20),
+      impressionsMinFlow: z.number().min(0).max(5000),
       impressionsVisibilityPct: z.number().min(0).max(100),
     })
     .partial();

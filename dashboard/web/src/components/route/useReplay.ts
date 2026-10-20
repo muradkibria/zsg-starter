@@ -7,25 +7,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Map as MLMap } from "maplibre-gl";
-import { buildReplayTrack, type ReplayTrack, type RouteResponse, type StationVisit } from "@digilite/shared";
-import { drawReplay, drawStationVisits } from "../map/layers";
+import { buildReplayTrack, type ReplayTrack, type RouteResponse } from "@digilite/shared";
+import { drawReplay } from "../map/layers";
 
-const NO_VISITS: StationVisit[] = [];
-
-/** Estimated impressions up to `at` (epoch ms): whole visits before it, part of the one it's in. */
-export function impressionsUntil(visits: StationVisit[], at: number): { total: number; near: StationVisit | null } {
+/** Estimated impressions along a route up to `at` (epoch ms), counting part of the bin it's in. */
+export function impressionsUntil(bins: RouteResponse["impressions"] | undefined, at: number): number {
+  if (!bins?.values.length) return 0;
+  const x = (at - bins.start) / 1000 / bins.binS;
   let total = 0;
-  let near: StationVisit | null = null;
-  for (const v of visits) {
-    const s = Date.parse(v.start);
-    const e = Date.parse(v.end);
-    if (at >= e) total += v.impressions;
-    else if (at > s) {
-      total += (v.impressions * (at - s)) / Math.max(1, e - s);
-      near = v;
-    }
-  }
-  return { total, near };
+  for (let i = 0; i < bins.values.length && i < x; i++) total += bins.values[i] * Math.min(1, x - i);
+  return total;
 }
 
 /** Seconds of the day per second of playback: 1, 5 and 20 minutes a second. */
@@ -49,9 +40,6 @@ export interface Replay {
   /** First and last fix (epoch ms), or null when there's nothing to replay */
   span: [number, number] | null;
   track: ReplayTrack | null;
-  /** Time near TfL stations on this route, with estimated impressions */
-  visits: StationVisit[];
-  catchmentM: number;
   /** Called every animation frame while playing, and on every seek */
   subscribe: (fn: Listener) => () => void;
   /** The moment shown right now (between page updates) */
@@ -126,8 +114,6 @@ export function useReplay(route: RouteResponse | null | undefined): Replay {
     speed,
     span,
     track,
-    visits: route?.stationVisits ?? NO_VISITS,
-    catchmentM: route?.catchmentM ?? 250,
     subscribe,
     now,
     seek: (v) => span && show(clamp(v), true),
@@ -158,8 +144,6 @@ export function useReplayOnMap(map: MLMap | null, replay: Replay | undefined, fo
   const followRef = useRef(follow);
   followRef.current = follow;
   const track = replay?.track ?? null;
-  const visits = replay?.visits ?? NO_VISITS;
-  const catchmentM = replay?.catchmentM ?? 250;
   const subscribe = replay?.subscribe;
   const now = replay?.now;
   useEffect(() => {
@@ -171,7 +155,6 @@ export function useReplayOnMap(map: MLMap | null, replay: Replay | undefined, fo
     map.on("movestart", onMove);
     const draw = (at: number | null, playing: boolean) => {
       const head = drawReplay(map, track, at);
-      drawStationVisits(map, track ? visits : NO_VISITS, at, catchmentM);
       const pad = followRef.current?.();
       if (head && playing && pad && performance.now() - movedByHand > 4000) drift(map, head, pad);
     };
@@ -181,7 +164,7 @@ export function useReplayOnMap(map: MLMap | null, replay: Replay | undefined, fo
       off();
       map.off("movestart", onMove);
     };
-  }, [map, track, subscribe, now, visits, catchmentM]);
+  }, [map, track, subscribe, now]);
 }
 
 /** Nudge the camera a little each frame towards keeping `head` in the middle 60% of the visible area. */

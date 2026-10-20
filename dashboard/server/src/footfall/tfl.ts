@@ -5,13 +5,15 @@
 //
 // Kept in PocketBase (`tfl_footfall`, one row per station, every day TfL has
 // published) and refreshed weekly: TfL adds the latest week every week or so.
+// Days rolled up before TfL published them used the same weekday of the latest
+// week as a stand-in; when their real counts arrive they're queued for recompute.
 // Days already held are never thrown away. Station names are matched to
 // locations with the bundled TfL StopPoint list (station-coords.json).
 
 import type { FootfallStation } from "@digilite/shared";
 import { logger } from "../log";
-import { getState, setState } from "../jobs/state";
-import { getAll, pb, type RecordModel } from "../pb";
+import { getState, markDirty, setState } from "../jobs/state";
+import { getAll, pb, q, type RecordModel } from "../pb";
 import coords from "./station-coords.json" with { type: "json" };
 
 const log = logger("tfl");
@@ -130,10 +132,16 @@ export async function refreshFootfall(): Promise<{ stations: number; latestDay: 
 export function startFootfallRefresh() {
   const due = async () => {
     try {
-      const last = await getState<{ at: number }>(STATE_KEY);
+      const last = await getState<{ at: number; latestDay?: string | null }>(STATE_KEY);
       if (last && Date.now() - last.at < 7 * 86400_000) return;
       const r = await refreshFootfall();
       await setState(STATE_KEY, { at: Date.now(), latestDay: r.latestDay });
+      // Days that had used last week's counts as a stand-in now have TfL's own: recompute them.
+      if (last?.latestDay && r.latestDay && r.latestDay > last.latestDay) {
+        const rows = await getAll<RecordModel>("bag_days", { filter: `day > ${q(last.latestDay)} && day <= ${q(r.latestDay)}`, fields: "bag,day" });
+        for (const row of rows) markDirty(row.bag, row.day);
+        log.info(`TfL published ${last.latestDay} → ${r.latestDay}: recomputing ${rows.length} bag-days with the real counts`);
+      }
     } catch (err) {
       log.warn(`couldn't refresh TfL footfall: ${(err as Error).message}`);
     }

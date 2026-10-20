@@ -23,7 +23,7 @@ function rangeError(raw: string, min: number, max: number, label = "a number"): 
 function NumberInput({ value, onChange, unit, min, max, disabled, id }: { value: string; onChange: (v: string) => void; unit: string; min: number; max: number; disabled?: boolean; id?: string }) {
   return (
     <span className="flex items-center gap-2">
-      <Input id={id} type="number" inputMode="decimal" min={min} max={max} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} className="max-w-28" />
+      <Input id={id} type="number" inputMode="decimal" step="any" min={min} max={max} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} className="max-w-28" />
       <span className="text-[13px] font-normal text-muted">{unit}</span>
     </span>
   );
@@ -319,27 +319,35 @@ function RecomputeCard() {
 export function ImpressionsSection() {
   return (
     <WithSettings>
-      {(s, ro) => <ImpressionsForm key={`${s.impressionsRadiusM}|${s.impressionsStreetPct}|${s.impressionsVisibilityPct}`} s={s} readOnly={ro} />}
+      {(s, ro) => <ImpressionsForm key={`${s.impressionsSpreadM}|${s.impressionsFlowPerTap}|${s.impressionsMinFlow}|${s.impressionsVisibilityPct}`} s={s} readOnly={ro} />}
     </WithSettings>
   );
 }
 
 const IMPRESSION_FIELDS = [
   {
-    key: "impressionsRadiusM",
-    label: "Station catchment",
+    key: "impressionsSpreadM",
+    label: "Busyness spread",
     unit: "metres",
-    min: 25,
-    max: 1000,
-    hint: "A bag within this distance of a TfL station (straight-line, Haversine) counts as near it. Where catchments overlap, only the nearest station counts.",
+    min: 50,
+    max: 2000,
+    hint: "How far a station's footfall spreads into the streets around it. Busyness fades smoothly with distance (a bell curve this wide), so there's no hard edge.",
   },
   {
-    key: "impressionsStreetPct",
-    label: "Station users passing the street",
-    unit: "%",
+    key: "impressionsFlowPerTap",
+    label: "Street flow per station movement",
+    unit: "people",
     min: 0,
-    max: 100,
-    hint: "Of everyone entering or leaving the station that hour, the share assumed to pass along the street where the bag is.",
+    max: 20,
+    hint: "Pedestrians passing a point on the street each hour, for every entry or exit at a station right there in that hour.",
+  },
+  {
+    key: "impressionsMinFlow",
+    label: "Minimum street flow",
+    unit: "per hour",
+    min: 0,
+    max: 5000,
+    hint: "Pedestrians passing a point each hour on any street, however far from a station.",
   },
   {
     key: "impressionsVisibilityPct",
@@ -347,7 +355,7 @@ const IMPRESSION_FIELDS = [
     unit: "%",
     min: 0,
     max: 100,
-    hint: "Of those passing, the share assumed to have a reasonable chance to see the screen (movement, direction, distance, obstructions).",
+    hint: "Of the people the screen passes, the share with a reasonable chance to see it (movement, direction, distance, obstructions).",
   },
 ] as const;
 
@@ -382,9 +390,9 @@ function ImpressionsForm({ s, readOnly }: { s: SettingsDto; readOnly: boolean })
     <Card className="flex flex-col gap-5 p-4 md:p-5" aria-label="Impressions">
       <CardHeader
         title="Estimated impressions"
-        sub="Impressions = TfL daily station movements × estimated hourly share × time near the station × station users passing the street × visibility × the advertiser's share of screen time. These are working assumptions, not measurements: calibrate them before relying on the figures."
+        sub="TfL station footfall gauges how busy each street is. The screen meets the people along the streets it rides and those walking past while it waits; impressions = those people × visibility × the advertiser's share of screen time. These are working assumptions, not measurements: calibrate them before relying on the figures."
       />
-      <div className="grid gap-5 sm:grid-cols-3">
+      <div className="grid gap-5 sm:grid-cols-2">
         {IMPRESSION_FIELDS.map((f) => (
           <Field key={f.key} label={f.label} error={errors[f.key]} hint={f.hint}>
             <NumberInput value={v[f.key]} onChange={(x) => setV({ ...v, [f.key]: x })} unit={f.unit} min={f.min} max={f.max} disabled={readOnly} />

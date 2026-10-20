@@ -90,8 +90,9 @@ export interface CampaignReport {
     /** Last day TfL has published; later days use the same weekday of the latest week */
     footfallThrough: string | null;
     /** The working assumptions used (Settings → Impressions) */
-    radiusM: number;
-    streetShare: number;
+    spreadM: number;
+    flowPerTap: number;
+    minFlow: number;
     visibility: number;
   };
   /** Estimated impressions by London hour over the period, 0–23, and by time of day */
