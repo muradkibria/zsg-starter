@@ -655,7 +655,16 @@ async function seed(pb) {
     await pb.collection("app_settings").create(SETTINGS_ROW);
     console.log("  seeded   app_settings (main)");
   } else {
-    console.log("  kept     app_settings (main)");
+    // Settings added after the row was made read 0 until set: give the impressions
+    // assumptions their starting values once (0 would mean, e.g., no minimum street flow).
+    const row = settings.items[0];
+    if (!row.impressions_spread_m && !row.impressions_flow_per_tap && !row.impressions_visibility_pct) {
+      const fill = Object.fromEntries(Object.entries(SETTINGS_ROW).filter(([k]) => k.startsWith("impressions_")));
+      await pb.collection("app_settings").update(row.id, fill);
+      console.log("  set      impressions assumptions to their starting values");
+    } else {
+      console.log("  kept     app_settings (main)");
+    }
   }
 
   const zones = await pb.collection("zones").getList(1, 1, { fields: "id" });
