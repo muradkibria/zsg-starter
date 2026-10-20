@@ -11,11 +11,12 @@ import { Button, ErrorState, Spinner } from "@/components/ui";
 import { presetPeriod } from "../campaigns/format";
 import { useCampaign } from "../campaigns/api";
 import { useCampaignReport } from "./api";
-import { ReportDocument } from "./ReportDocument";
+import { ReportDocument, reportMapKeys } from "./ReportDocument";
 import { builderHref, readReportParams } from "./reportParams";
 
 const PRINT_CSS = `
 @page { size: A4 portrait; margin: 10mm; }
+.dl-report-page { break-before: page; }
 @media print {
   html, body { height: auto !important; background: #fff !important; overflow: visible !important; }
   body > *:not(.dl-report-overlay) { display: none !important; }
@@ -39,11 +40,12 @@ export default function ReportPage() {
   const report = useCampaignReport(ready ? id : null, fromDay, toDay, st.riderNames);
   const r = report.data;
   const autoPrint = params.get("print") === "1";
-  const [mapImage, setMapImage] = useState<string | null>(null);
+  const [mapImages, setMapImages] = useState<Record<string, string>>({});
   const printed = useRef(false);
 
-  const needsMap = !!r && st.sections.includes("map") && r.stats.totals.plays > 0;
-  const canPrint = !!r && (!needsMap || !!mapImage);
+  // Print once every map has handed over its picture.
+  const mapKeys = r ? reportMapKeys(r, st.sections) : [];
+  const canPrint = !!r && mapKeys.every((k) => mapImages[k]);
 
   // Title the tab (and the saved PDF) after the report.
   useEffect(() => {
@@ -67,7 +69,7 @@ export default function ReportPage() {
         next.delete("print");
         setParams(next, { replace: true });
       },
-      canPrint ? 400 : 6000,
+      canPrint ? 400 : 12000,
     );
     return () => clearTimeout(t);
   }, [autoPrint, r, canPrint, params, setParams]);
@@ -93,7 +95,7 @@ export default function ReportPage() {
         )}
         {r && (
           <>
-            <ReportDocument report={r} sections={st.sections} summary={st.summary ?? r.summary} onMapSnapshot={setMapImage} mapImage={mapImage} />
+            <ReportDocument report={r} sections={st.sections} summary={st.summary ?? r.summary} onMapSnapshot={(key, url) => setMapImages((m) => (m[key] === url ? m : { ...m, [key]: url }))} mapImages={mapImages} />
             <p className="dl-report-toolbar mx-auto mt-4 max-w-[794px] text-center text-xs text-muted">
               To download, choose <strong>Save as PDF</strong> in the print dialog.
             </p>

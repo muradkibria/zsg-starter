@@ -2,10 +2,10 @@
 // bags over London days, as Excel, CSV or a map file. A check before you
 // download says what's in the file; every download is audited.
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import clsx from "clsx";
-import { CalendarDays, Download } from "lucide-react";
+import { CalendarDays, CircleHelp, Download } from "lucide-react";
 import {
   EXPORT_TYPES,
   EXPORT_TYPE_LABEL,
@@ -254,7 +254,29 @@ function FormatPicker({ type, format, formats, onChange }: { type: ExportType; f
         ))}
       </div>
       {type === "routes" && (format === "gpx" || format === "kml") && (
-        <p className="m-0 mt-2 text-xs text-muted">One track per bag per day, named with the rider. The line breaks at signal gaps; nothing is joined up.</p>
+        <p className="m-0 mt-2 flex items-start gap-1.5 text-xs text-muted">
+          <span>One track per bag per day, named with the rider. The line breaks at signal gaps; nothing is joined up.</span>
+          <HelpTip label={format === "gpx" ? "How to open a GPX file" : "How to open a KML file"}>
+            {format === "gpx" ? (
+              <>
+                <strong className="block text-ink">Opening the GPX file</strong>
+                <span className="block">
+                  Quickest: drag it onto <strong>gpx.studio</strong> in a browser. Or in <strong>Google My Maps</strong>: Create a new map → Import → choose the file. Strava, Garmin
+                  BaseCamp, QGIS and most route apps open it too.
+                </span>
+                <span className="block">Each bag-day is its own track, with the time of every point, so apps that replay routes can play it back.</span>
+              </>
+            ) : (
+              <>
+                <strong className="block text-ink">Opening the KML file</strong>
+                <span className="block">
+                  In <strong>Google Earth</strong>: File → Open (or drag it in). In <strong>Google My Maps</strong>: Create a new map → Import.
+                </span>
+                <span className="block">Each bag-day is its own track, named with the bag and rider.</span>
+              </>
+            )}
+          </HelpTip>
+        </p>
       )}
     </fieldset>
   );
@@ -288,5 +310,31 @@ function DownloadBlock({ request, format, preview, loading }: { request: ExportR
         {!request ? "Pick the days first" : preview && preview.rowCount === 0 ? "Nothing to download for this choice" : [size, extra].filter(Boolean).join(" · ") || "\u00a0"}
       </span>
     </div>
+  );
+}
+
+/** A small (?) that opens a note on hover, focus or tap. */
+function HelpTip({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+        className="flex size-5 shrink-0 items-center justify-center rounded-full text-muted hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        <CircleHelp className="size-4" aria-hidden="true" />
+      </button>
+      {open && (
+        <span role="tooltip" className="absolute top-6 right-0 z-20 flex w-72 flex-col gap-1.5 rounded-lg border border-rule bg-white p-3 text-xs leading-snug text-ink-2 shadow-[var(--shadow-pop)]">
+          {children}
+        </span>
+      )}
+    </span>
   );
 }

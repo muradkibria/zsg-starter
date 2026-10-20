@@ -1,7 +1,7 @@
 // Shared map layers: zones, a bag's route (with stops and signal gaps), fleet bags.
 
 import type { Map as MLMap } from "maplibre-gl";
-import { circleRing, replayAt, replayPathAt, type LiveBag, type ReplayTrack, type RouteResponse, type ZoneDto } from "@digilite/shared";
+import { circleRing, replayAt, replayPathAt, type LiveBag, type ReplayTrack, type RouteResponse, type StationVisit, type ZoneDto } from "@digilite/shared";
 import { formatDuration } from "@digilite/shared";
 import { shortName } from "@/lib/format";
 import { EMPTY, ensureLayer, setSource, setVisible } from "./MapView";
@@ -246,5 +246,60 @@ export function drawBags(map: MLMap, bags: LiveBag[]) {
       "icon-opacity": ["get", "opacity"],
       "text-opacity": ["get", "opacity"],
     },
+  });
+}
+
+/**
+ * TfL station catchments a route passed (with the screen on), shown while
+ * replaying: faint rings for each, the one the bag is in now highlighted and
+ * named with its estimated impressions so far. Cleared when `at` is null.
+ */
+export function drawStationVisits(map: MLMap, visits: StationVisit[], at: number | null, radiusM: number) {
+  const on = at !== null && visits.length > 0;
+  if (!on && !map.getSource("visits")) return;
+  const seen = new Map<string, { v: StationVisit; total: number; now: boolean }>();
+  if (on) {
+    for (const v of visits) {
+      const s = Date.parse(v.start);
+      const e = Date.parse(v.end);
+      if (s > at) continue;
+      const cur = seen.get(v.key) ?? { v, total: 0, now: false };
+      cur.total += at >= e ? v.impressions : (v.impressions * (at - s)) / Math.max(1, e - s);
+      if (at < e) cur.now = true;
+      seen.set(v.key, cur);
+    }
+  }
+  const features: GeoJSON.Feature[] = [...seen.values()].map(({ v, total, now }) => ({
+    type: "Feature",
+    properties: { now: now ? 1 : 0, label: now ? `${v.name} · ≈ ${Math.round(total).toLocaleString("en-GB")}` : "" },
+    geometry: { type: "Polygon", coordinates: [circleRing(v.lat, v.lng, radiusM, 48)] },
+  }));
+  setSource(map, "visits", { type: "FeatureCollection", features });
+  setSource(map, "visits-labels", {
+    type: "FeatureCollection",
+    features: [...seen.values()].filter((x) => x.now).map(({ v, total }) => ({
+      type: "Feature",
+      properties: { label: `${v.name} · ≈ ${Math.round(total).toLocaleString("en-GB")} impressions` },
+      geometry: { type: "Point", coordinates: [v.lng, v.lat] },
+    })),
+  });
+  ensureLayer(map, {
+    id: "visits-fill",
+    type: "fill",
+    source: "visits",
+    paint: { "fill-color": "#c26a00", "fill-opacity": ["case", ["==", ["get", "now"], 1], 0.22, 0.06] },
+  }, "replay-path");
+  ensureLayer(map, {
+    id: "visits-line",
+    type: "line",
+    source: "visits",
+    paint: { "line-color": "#c26a00", "line-width": ["case", ["==", ["get", "now"], 1], 2, 1], "line-opacity": ["case", ["==", ["get", "now"], 1], 0.9, 0.35] },
+  }, "replay-path");
+  ensureLayer(map, {
+    id: "visits-label",
+    type: "symbol",
+    source: "visits-labels",
+    layout: { "text-field": ["get", "label"], "text-font": FONT, "text-size": 12, "text-anchor": "bottom", "text-offset": [0, -1.2] },
+    paint: { "text-color": "#7a4300", "text-halo-color": "#ffffff", "text-halo-width": 2.2 },
   });
 }

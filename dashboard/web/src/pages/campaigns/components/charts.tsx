@@ -206,14 +206,17 @@ export function HBarList({
   rows,
   className,
   dense,
+  columns,
 }: {
   rows: { key: string; label: ReactNode; value: number; display: ReactNode; sub?: ReactNode }[];
   className?: string;
   dense?: boolean;
+  /** Lay the bars out in two columns (one shared scale) */
+  columns?: 2;
 }) {
   const max = Math.max(0, ...rows.map((r) => r.value)) || 1;
   return (
-    <ul className={clsx("m-0 flex list-none flex-col p-0", dense ? "gap-2" : "gap-3", className)}>
+    <ul className={clsx("m-0 list-none p-0", columns === 2 ? "grid gap-x-8 @xl:grid-cols-2" : "flex flex-col", dense ? "gap-y-2" : "gap-y-3", className)}>
       {rows.map((r) => (
         <li key={r.key} className="flex flex-col gap-1">
           <div className="flex items-baseline justify-between gap-3 text-[13px]">

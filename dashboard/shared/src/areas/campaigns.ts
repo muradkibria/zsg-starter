@@ -182,6 +182,10 @@ export interface CampaignDayPlays {
   plays: number;
   seconds: number;
   bags: number;
+  /** Estimated impressions (TfL footfall) */
+  impressions: number;
+  /** TfL hasn't published this day yet: its impressions use the same weekday of the latest week TfL has */
+  footfallStandIn: boolean;
   /** Before our play records begin: no data, not zero */
   noRecords: boolean;
 }
@@ -219,7 +223,11 @@ export interface CampaignStats {
     km: number;
     /** Time those bags were out, on those days */
     onSeconds: number;
+    /** Estimated impressions over the days TfL has published (see impressions.ts) */
+    impressions: number;
   };
+  /** The last day TfL footfall covers (later days use the same weekday of the latest week) */
+  footfallThrough: string | null;
   perDay: CampaignDayPlays[];
   /** Plays by London hour of day, 0–23 */
   byHour: number[];

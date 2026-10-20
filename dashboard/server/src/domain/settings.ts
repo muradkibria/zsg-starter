@@ -1,4 +1,4 @@
-import type { AnalyticsConfig, SettingsDto } from "@digilite/shared";
+import { DEFAULT_IMPRESSIONS, type AnalyticsConfig, type ImpressionsParams, type SettingsDto } from "@digilite/shared";
 import { getFirst, pb, type RecordModel } from "../pb";
 
 let cache: { at: number; rec: RecordModel } | null = null;
@@ -24,6 +24,9 @@ export function toSettingsDto(r: RecordModel): SettingsDto {
     payRate: r.pay_rate || "",
     payMinHours: r.pay_min_hours || 0,
     paySignalGaps: !!r.pay_signal_gaps,
+    impressionsRadiusM: r.impressions_radius_m || DEFAULT_IMPRESSIONS.radiusM,
+    impressionsStreetPct: r.impressions_street_pct || DEFAULT_IMPRESSIONS.streetShare * 100,
+    impressionsVisibilityPct: r.impressions_visibility_pct || DEFAULT_IMPRESSIONS.visibility * 100,
   };
 }
 
@@ -45,6 +48,9 @@ export async function updateSettings(patch: Partial<SettingsDto>): Promise<Setti
   if (patch.payRate !== undefined) map.pay_rate = patch.payRate;
   if (patch.payMinHours !== undefined) map.pay_min_hours = patch.payMinHours;
   if (patch.paySignalGaps !== undefined) map.pay_signal_gaps = patch.paySignalGaps;
+  if (patch.impressionsRadiusM !== undefined) map.impressions_radius_m = patch.impressionsRadiusM;
+  if (patch.impressionsStreetPct !== undefined) map.impressions_street_pct = patch.impressionsStreetPct;
+  if (patch.impressionsVisibilityPct !== undefined) map.impressions_visibility_pct = patch.impressionsVisibilityPct;
   const updated = await pb.collection("app_settings").update(rec.id, map);
   cache = { at: Date.now(), rec: updated };
   return toSettingsDto(updated);
@@ -59,4 +65,10 @@ export async function analyticsConfig(): Promise<AnalyticsConfig> {
     stopMin: s.stopMin,
     maxSpeedMs: 25,
   };
+}
+
+/** The impressions assumptions, as the model takes them. */
+export async function impressionsParams(): Promise<ImpressionsParams> {
+  const s = await getSettings();
+  return { radiusM: s.impressionsRadiusM, streetShare: s.impressionsStreetPct / 100, visibility: s.impressionsVisibilityPct / 100 };
 }

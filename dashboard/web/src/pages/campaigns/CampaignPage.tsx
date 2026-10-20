@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import clsx from "clsx";
 import { FileText, Link2, Pencil, Table2 } from "lucide-react";
-import { todayLondon, type CampaignDetail, type CampaignStats } from "@digilite/shared";
+import { roundEstimate, todayLondon, type CampaignDetail, type CampaignStats } from "@digilite/shared";
 import { Button, Card, CardHeader, EmptyState, ErrorState, EstimateBox, LinkButton, Notice, Page, PageHeader, Spinner, Stat } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
 import { useCampaign, useCampaignStats, useSuggestedCreatives } from "./api";
@@ -76,11 +76,6 @@ export default function CampaignPage() {
       <CreativesCard c={c} canEdit={canEdit} onLink={() => setPicking(true)} />
 
       <Measured c={c} />
-
-      <EstimateBox>
-        <p className="m-0 text-sm font-semibold text-ink">Reach and impressions</p>
-        <p className="m-0 mt-1 text-[13px] text-ink-2">Estimated reach isn't included until the method is agreed. Everything above is measured by the bags.</p>
-      </EstimateBox>
 
       {canEdit && <CampaignForm open={editing} onClose={() => setEditing(false)} campaign={c} />}
       {canEdit && <CreativePicker open={picking} onClose={() => setPicking(false)} campaign={c} />}
@@ -227,6 +222,8 @@ function MeasuredBody({ s, stale }: { s: CampaignStats; stale: boolean }) {
         <Stat label="Time out" value={screenHours(t.onSeconds)} sub="by those bags, on those days" className="bg-white" />
       </div>
 
+      {!none && <ImpressionsBox s={s} />}
+
       {none ? (
         <Card>
           <EmptyState
@@ -354,5 +351,24 @@ function BagsTable({ s }: { s: CampaignStats }) {
         </div>
       )}
     </Card>
+  );
+}
+
+/** Estimated impressions for the period shown: kept apart from the measured numbers, with a link to the method. */
+function ImpressionsBox({ s }: { s: CampaignStats }) {
+  const standIn = s.perDay.filter((d) => d.plays > 0 && d.footfallStandIn).length;
+  return (
+    <EstimateBox>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-5">
+        <div className="flex shrink-0 flex-col">
+          <span className="text-[11px] font-bold tracking-[0.12em] text-amber-ink uppercase">Estimated impressions</span>
+          <span className="font-display text-[26px] leading-tight font-semibold">≈ {n(roundEstimate(s.totals.impressions))}</span>
+        </div>
+        <p className="m-0 text-[13px] text-ink-2">
+          From TfL's daily station entry and exit counts near the bags while they showed it, with working assumptions set in Settings (not yet calibrated).
+          {standIn > 0 && ` ${plural(standIn, "day")} not yet published by TfL use the same weekday of the latest week.`}
+        </p>
+      </div>
+    </EstimateBox>
   );
 }

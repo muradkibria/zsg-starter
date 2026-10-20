@@ -194,6 +194,18 @@ export interface RouteSummary {
   km: number;
 }
 
+/** A stretch of a route inside a TfL station's catchment while the screen was on. */
+export interface StationVisit {
+  key: string;
+  name: string;
+  lat: number;
+  lng: number;
+  start: string;
+  end: string;
+  /** Estimated impressions (all ads) */
+  impressions: number;
+}
+
 export interface RouteResponse {
   bagId: string;
   bagName: string;
@@ -204,6 +216,10 @@ export interface RouteResponse {
   segments: [number, number][][];
   /** When each point of `segments` was recorded (epoch seconds), same shape: for replaying the route */
   times: number[][];
+  /** Time near TfL stations with the screen on, and the estimated impressions there */
+  stationVisits: StationVisit[];
+  /** The station catchment radius used, metres */
+  catchmentM: number;
   gaps: RouteGap[];
   stops: RouteStop[];
   shifts: ShiftSummary[];
@@ -229,6 +245,8 @@ export interface BagDayDto {
   gaps: number;
   km: number;
   plays: number;
+  /** Estimated impressions while the screen was on (TfL footfall: see impressions.ts) */
+  impressions: number;
   zones: ZoneTime[];
   shifts: ShiftSummary[];
 }
@@ -334,6 +352,12 @@ export interface SettingsDto {
   payRate: string;
   payMinHours: number;
   paySignalGaps: boolean;
+  /** Impressions: station catchment radius, metres (an assumption to calibrate) */
+  impressionsRadiusM: number;
+  /** Impressions: share of station users passing the bag's street, % */
+  impressionsStreetPct: number;
+  /** Impressions: share of those passing with a reasonable chance to see the screen, % */
+  impressionsVisibilityPct: number;
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────

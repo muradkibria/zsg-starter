@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { ChevronRight } from "lucide-react";
 import { addDays, todayLondon, type BagDayDto, type BagDetail } from "@digilite/shared";
+import { roundEstimate } from "@digilite/shared";
 import { useBagDays } from "@/lib/queries";
 import { ErrorState, Spinner, cx } from "@/components/ui";
 import { dayLabel, formatDuration, hours, km, longDay, num, time } from "@/lib/format";
@@ -34,13 +35,13 @@ export function DaysSection({ bag, className }: { bag: BagDetail; className?: st
   const out = series.filter((p) => p.out);
   const notOut = series.filter((p) => !p.out);
   const total = out.reduce(
-    (a, p) => ({ moving: a.moving + p.d!.movingSeconds, km: a.km + p.d!.km, plays: a.plays + p.d!.plays }),
-    { moving: 0, km: 0, plays: 0 },
+    (a, p) => ({ moving: a.moving + p.d!.movingSeconds, km: a.km + p.d!.km, plays: a.plays + p.d!.plays, impressions: a.impressions + (p.d!.impressions ?? 0) }),
+    { moving: 0, km: 0, plays: 0, impressions: 0 },
   );
 
   const sub = days.data
     ? out.length
-      ? `Out ${out.length} of 14 days · ${hours(total.moving)} moving · ${km(total.km)} · ${num(total.plays)} plays`
+      ? `Out ${out.length} of 14 days · ${hours(total.moving)} moving · ${km(total.km)} · ${num(total.plays)} plays${total.impressions ? ` · ≈ ${num(roundEstimate(total.impressions))} est. impressions` : ""}`
       : "Not out in the last 14 days"
     : undefined;
 
@@ -215,7 +216,8 @@ function DayRow({ p, bagId, today }: { p: DayPoint; bagId: string; today: string
             </span>
           </span>
           <span className="num truncate text-ink-2">
-            <strong className="font-semibold text-ink">{hours(d.movingSeconds)}</strong> moving · {km(d.km)} · {num(d.plays)} plays · {zones}
+            <strong className="font-semibold text-ink">{hours(d.movingSeconds)}</strong> moving · {km(d.km)} · {num(d.plays)} plays
+            {d.impressions > 0 && <span className="text-amber-ink"> · ≈ {num(roundEstimate(d.impressions))} est. impressions</span>} · {zones}
           </span>
         </span>
         {/* Wider: one aligned row under the header */}

@@ -1,5 +1,6 @@
-// On screen: the latest screenshot (taken only on request), the loop the bag
-// reports playing, and how that compares with the fleet loop.
+// On screen: the loop the bag reports playing, running as it does on the bag
+// (the same preview as the loop editor's "On the bag"), how that compares with
+// the fleet loop, and the latest screenshot (taken only on request).
 
 import { Link } from "react-router";
 import { Camera, CircleCheck, FlaskConical } from "lucide-react";
@@ -7,6 +8,8 @@ import type { BagDetail, FleetOverview } from "@digilite/shared";
 import { useAuth } from "@/lib/auth";
 import { Button, ScreenFrame } from "@/components/ui";
 import { shortDate, time, when } from "@/lib/format";
+import { useOnScreen } from "@/lib/queries";
+import { LoopPreview, type PreviewItem } from "../../loops/editor/LoopPreview";
 import { useRunCommand } from "../api";
 import { Differs, Section, hasIssue } from "../bits";
 
@@ -20,12 +23,27 @@ export function ScreenSection({ bag, fleet, className }: { bag: BagDetail; fleet
   const stored = bag.device.downloadedPrograms;
   const fleetLoop = fleet?.fleetLoop ?? null;
   const oddShape = !!bag.device.resolution && bag.device.resolution !== "160 × 120";
+  const onScreen = useOnScreen(true);
+  const loop = onScreen.data ? onScreen.data.loops[onScreen.data.bags[bag.id]] : undefined;
+  const preview: PreviewItem[] = (loop?.slots ?? []).map((sl, i) => ({ key: `${i}:${sl.creativeId}`, name: sl.name, thumbUrl: sl.thumbUrl, seconds: sl.seconds }));
   const alt = shot ? `${bag.name}'s screen, ${shortDate(shot.takenAt)} ${time(shot.takenAt)}` : undefined;
 
   return (
     <Section title="On screen" sub="As the bag reports it" className={className}>
-      <div className="flex gap-4 xl:flex-col">
-        <figure className="m-0 w-36 shrink-0 sm:w-48 xl:w-full">
+      {preview.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <LoopPreview items={preview} />
+          <span className="text-xs text-muted">The loop running as it does on the bag. Bags report the loop, not which ad is showing this second.</span>
+        </div>
+      )}
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className="text-xs text-muted">Current loop</span>
+        <span className="text-[15px] font-semibold break-words">{bag.playing ?? "Not reported"}</span>
+        {bag.playing && <LoopNote bag={bag} fleetLoop={fleetLoop} canLoops={can("loops.edit")} />}
+      </div>
+      <details className="group border-t border-rule-soft pt-3 text-[13px]" open={preview.length === 0}>
+        <summary className="min-h-8 cursor-pointer font-semibold text-ink-2 select-none">Last screenshot</summary>
+        <figure className="m-0 mt-2 w-48 max-w-full xl:w-full">
           {/* 160 × 120 fills the 4:3 frame; any other shape is shown whole rather than cropped. */}
           <ScreenFrame src={shot?.url} alt={alt} fit={oddShape ? "contain" : "cover"}>
             <span className="flex flex-col items-center gap-1.5 px-2 text-center text-[11px] text-[#b8c2d6]">
@@ -44,13 +62,7 @@ export function ScreenSection({ bag, fleet, className }: { bag: BagDetail; fleet
             )}
           </figcaption>
         </figure>
-
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="text-xs text-muted">Current loop</span>
-          <span className="text-[15px] font-semibold break-words">{bag.playing ?? "Not reported"}</span>
-          {bag.playing && <LoopNote bag={bag} fleetLoop={fleetLoop} canLoops={can("loops.edit")} />}
-        </div>
-      </div>
+      </details>
       {can("bags.control") && (
         <Button
           icon={<Camera className="size-4" />}

@@ -34,6 +34,10 @@ import {
   type CampaignMapLine,
   type CampaignPhase,
   type CampaignReport,
+  type ReportDay,
+  type ReportHex,
+  exposureParts,
+  londonClock,
   type CampaignStats,
   type CampaignStatus,
   type CampaignSummary,
@@ -48,8 +52,9 @@ import {
 import { getAll, getOneOrNull, parsePbDate, pb, pbDate, q, type RecordModel } from "../pb";
 import { activeAt, allAssignments, currentRiderByBag } from "./assignments";
 import { isTestBag, loadBags } from "./bags";
-import { analyticsConfig } from "./settings";
-import { bagDays, loadPlacedPoints, loadPoints } from "./tracks";
+import { analyticsConfig, impressionsParams } from "./settings";
+import { footfall } from "../footfall/tfl";
+import { bagDays, loadPlacedPoints, loadPoints, stationIndex } from "./tracks";
 import { zoneNames } from "./zones";
 
 const DAY_MS = 86_400_000;
@@ -1061,14 +1066,29 @@ export async function campaignStats(
   let km = 0;
   let onSeconds = 0;
   const zoneSeconds = new Map<string, number>();
+  const dayRecs = new Map<string, RecordModel>();
   if (perBag.size) {
     for (const d of await bagDays([...perBag.keys()], fromDay, toDay)) {
       if (!pairs.has(`${d.bag}|${d.day}`)) continue;
+      dayRecs.set(`${d.bag}|${d.day}`, d);
       km += d.km || 0;
       onSeconds += d.on_seconds || 0;
       for (const [z, s] of Object.entries((d.zones ?? {}) as Record<string, number>)) zoneSeconds.set(z, (zoneSeconds.get(z) ?? 0) + (Number(s) || 0));
     }
   }
+  // Estimated impressions: each bag-hour's (while the screen was on) × this ad's share of that hour on screen.
+  const { latestDay: footfallThrough } = await footfall();
+  const impressionsByDay = new Map<string, number>();
+  for (const r of rows) {
+    if (r.seconds <= 0) continue;
+    const p = londonParts(r.hour);
+    const day = `${p.year}-${pad(p.month)}-${pad(p.day)}`;
+    const d = dayRecs.get(`${r.bag}|${day}`);
+    const screen = (d?.screen_hourly as number[] | undefined)?.[p.hour] ?? 0;
+    const impr = (d?.impressions_hourly as number[] | undefined)?.[p.hour] ?? 0;
+    if (screen > 0) impressionsByDay.set(day, (impressionsByDay.get(day) ?? 0) + impr * Math.min(1, r.seconds / screen));
+  }
+
   const zones: ZoneTime[] = [...zoneSeconds.entries()]
     .map(([zoneId, seconds]) => ({ zoneId, name: names.get(zoneId) ?? "Removed zone", seconds: Math.round(seconds) }))
     .filter((z) => z.seconds > 0)
@@ -1076,7 +1096,15 @@ export async function campaignStats(
 
   const perDayOut: CampaignDayPlays[] = days.map((day) => {
     const d = perDay.get(day)!;
-    return { day, plays: d.plays, seconds: Math.round(d.seconds), bags: d.bags.size, noRecords: !!coverage.from && day < coverage.from };
+    return {
+      day,
+      plays: d.plays,
+      seconds: Math.round(d.seconds),
+      bags: d.bags.size,
+      impressions: Math.round(impressionsByDay.get(day) ?? 0),
+      footfallStandIn: !footfallThrough || day > footfallThrough,
+      noRecords: !!coverage.from && day < coverage.from,
+    };
   });
   const bagRows: CampaignBagRow[] = [...perBag.entries()]
     .map(([bagId, b]) => ({
@@ -1103,7 +1131,9 @@ export async function campaignStats(
       daysWithPlays: daysWithPlays.length,
       km: Math.round(km * 10) / 10,
       onSeconds: Math.round(onSeconds),
+      impressions: perDayOut.reduce((s, d) => s + d.impressions, 0),
     },
+    footfallThrough,
     perDay: perDayOut,
     byHour,
     zones,
@@ -1124,7 +1154,135 @@ export function shortRiderName(name: string): string {
 
 // ── Client report ─────────────────────────────────────────────────────────────
 
-export const ESTIMATE_NOTE = "Estimated reach isn't included until the method is agreed.";
+/** Heat map hexagons: centre to corner, metres. */
+export const HEX_M = 120;
+const LAT0 = 51.5;
+const LNG0 = -0.1;
+const KX = 111320 * Math.cos((LAT0 * Math.PI) / 180);
+const KY = 110540;
+
+/** The pointy-top hexagon a point falls in, as its centre. */
+export function hexCentre(lat: number, lng: number, size = HEX_M): { key: string; lat: number; lng: number } {
+  const x = (lng - LNG0) * KX;
+  const y = (lat - LAT0) * KY;
+  const qf = ((Math.sqrt(3) / 3) * x - y / 3) / size;
+  const rf = ((2 / 3) * y) / size;
+  let q = Math.round(qf);
+  let r = Math.round(rf);
+  const sf = -qf - rf;
+  const s = Math.round(sf);
+  const dq = Math.abs(q - qf);
+  const dr = Math.abs(r - rf);
+  const ds = Math.abs(s - sf);
+  if (dq > dr && dq > ds) q = -r - s;
+  else if (dr > ds) r = -q - s;
+  const cx = size * Math.sqrt(3) * (q + r / 2);
+  const cy = size * 1.5 * r;
+  return { key: `${q}:${r}`, lat: LAT0 + cy / KY, lng: LNG0 + cx / KX };
+}
+
+/**
+ * Day by day: where the ad was on screen (heat map) and the estimated impressions
+ * along the path the bags took (from TfL footfall around it; stations themselves
+ * are never reported). Only the hours it played, each
+ * stretch weighted by the ad's share of that hour on screen.
+ */
+async function reportDetail(md5s: string[], stats: CampaignStats, names: Map<string, string>) {
+  const rows = await playRows(md5s, londonDayStart(stats.fromDay), londonDayBounds(stats.toDay)[1]);
+  const clock = londonClock();
+  const adSeconds = new Map<string, number>();
+  const tasks = new Set<string>();
+  const playsByDayHour = new Map<string, number[]>();
+  for (const r of rows) {
+    if (r.plays <= 0 && r.seconds <= 0) continue;
+    const t = r.hour.getTime();
+    const c = clock(t);
+    adSeconds.set(`${r.bag}|${t}`, (adSeconds.get(`${r.bag}|${t}`) ?? 0) + r.seconds);
+    tasks.add(`${r.bag}|${c.day}`);
+    const hours = playsByDayHour.get(c.day) ?? Array.from({ length: 24 }, () => 0);
+    hours[c.hour] += r.plays;
+    playsByDayHour.set(c.day, hours);
+  }
+  const index = await stationIndex();
+  const params = await impressionsParams();
+  const zeros = () => Array.from({ length: 24 }, () => 0);
+  const perDay = new Map<string, { impressions: number; byHour: number[]; hexes: Map<string, ReportHex> }>();
+  const all = { byHour: zeros(), hexes: new Map<string, ReportHex>() };
+  const addHex = (m: Map<string, ReportHex>, lat: number, lng: number, seconds: number) => {
+    const h = hexCentre(lat, lng);
+    const cur = m.get(h.key) ?? { lat: h.lat, lng: h.lng, seconds: 0 };
+    cur.seconds += seconds;
+    m.set(h.key, cur);
+  };
+
+  const queue = [...tasks];
+  const worker = async () => {
+    for (let task = queue.shift(); task; task = queue.shift()) {
+      const [bag, day] = task.split("|");
+      const [from, to] = londonDayBounds(day);
+      const pts = await loadPlacedPoints(bag, from, to);
+      const parts = exposureParts(pts, index, (t) => Math.min(1, (adSeconds.get(`${bag}|${Math.floor(t / HOUR_MS) * HOUR_MS}`) ?? 0) / 3600), params, clock);
+      const d = perDay.get(day) ?? { impressions: 0, byHour: zeros(), hexes: new Map() };
+      for (const part of parts) {
+        const h = clock(part.t).hour;
+        d.impressions += part.impressions;
+        d.byHour[h] += part.impressions;
+        all.byHour[h] += part.impressions;
+        addHex(d.hexes, part.lat, part.lng, part.seconds);
+        addHex(all.hexes, part.lat, part.lng, part.seconds);
+      }
+      perDay.set(day, d);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+
+  const toHexes = (m: Map<string, ReportHex>): ReportHex[] =>
+    [...m.values()].filter((h) => h.seconds >= 30).map((h) => ({ lat: Math.round(h.lat * 1e5) / 1e5, lng: Math.round(h.lng * 1e5) / 1e5, seconds: Math.round(h.seconds) }));
+
+  // Km and zones per day, from each carrying bag's day.
+  const bagIds = [...new Set([...tasks].map((t) => t.split("|")[0]))];
+  const dayFacts = new Map<string, { km: number; zones: Map<string, number> }>();
+  if (bagIds.length) {
+    for (const r of await bagDays(bagIds, stats.fromDay, stats.toDay)) {
+      if (!tasks.has(`${r.bag}|${r.day}`)) continue;
+      const f = dayFacts.get(r.day) ?? { km: 0, zones: new Map<string, number>() };
+      f.km += r.km || 0;
+      for (const [z, sec] of Object.entries((r.zones ?? {}) as Record<string, number>)) f.zones.set(z, (f.zones.get(z) ?? 0) + (Number(sec) || 0));
+      dayFacts.set(r.day, f);
+    }
+  }
+
+  const days: ReportDay[] = stats.perDay.map((p) => {
+    const d = perDay.get(p.day);
+    const f = dayFacts.get(p.day);
+    const byHour = playsByDayHour.get(p.day) ?? Array.from({ length: 24 }, () => 0);
+    return {
+      day: p.day,
+      plays: p.plays,
+      seconds: p.seconds,
+      bags: p.bags,
+      km: Math.round((f?.km ?? 0) * 10) / 10,
+      impressions: Math.round(d?.impressions ?? 0),
+      footfallStandIn: p.footfallStandIn,
+      byHour,
+      busiest: busiestStretch(byHour),
+      impressionsByHour: (d?.byHour ?? zeros()).map((v) => Math.round(v)),
+      impressionsTimeOfDay: timeOfDay(d?.byHour ?? zeros()),
+      zones: [...(f?.zones ?? new Map<string, number>()).entries()]
+        .map(([zoneId, seconds]) => ({ zoneId, name: names.get(zoneId) ?? "Removed zone", seconds: Math.round(seconds) }))
+        .filter((z) => z.seconds >= 60)
+        .sort((a, b) => b.seconds - a.seconds),
+      hexes: d ? toHexes(d.hexes) : [],
+    };
+  });
+  return {
+    days,
+    impressionsByHour: all.byHour.map((v) => Math.round(v)),
+    impressionsTimeOfDay: timeOfDay(all.byHour),
+    hexes: toHexes(all.hexes),
+    total: days.reduce((n, d) => n + d.impressions, 0),
+  };
+}
 
 export async function campaignReport(
   c: CampaignRow,
@@ -1142,6 +1300,7 @@ export async function campaignReport(
   const stats = await campaignStats(c, fromDay, toDay, { riderNames: include ? "short" : null });
   const { keys, md5s } = filesOf(c.id, await loadCreatives());
   const status = campaignStatus(c, today, await campaignFacts(c, md5s, keys.size, today));
+  const detail = await reportDetail(md5s, stats, await zoneNames());
   return {
     campaign: { id: c.id, advertiser: c.advertiser, name: c.name, startDay: c.startDay, endDay: c.endDay, demo: c.demo, status },
     fromDay,
@@ -1167,6 +1326,15 @@ export async function campaignReport(
       included: include,
       reason: riderNames.requested && !riderNames.permitted ? "Only people who can see riders can include rider names." : null,
     },
-    estimate: { included: false, note: ESTIMATE_NOTE },
+    impressions: {
+      total: detail.total,
+      footfallThrough: stats.footfallThrough,
+      ...(await impressionsParams()),
+    },
+    impressionsByHour: detail.impressionsByHour,
+    impressionsTimeOfDay: detail.impressionsTimeOfDay,
+    hexes: detail.hexes,
+    hexSizeM: HEX_M,
+    days: detail.days,
   };
 }

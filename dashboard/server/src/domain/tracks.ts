@@ -7,6 +7,12 @@ import {
   londonDayBounds,
   simplifyLine,
   simplifyTrack,
+  exposureParts,
+  indexStations,
+  londonClock,
+  type ImpressionsParams,
+  type StationIndex,
+  type StationVisit,
   sortPoints,
   spreadLatePoints,
   type BagDayDto,
@@ -16,9 +22,10 @@ import {
   type TrackPoint,
   programNameFromVsn,
 } from "@digilite/shared";
+import { footfall } from "../footfall/tfl";
 import { getAll, parsePbDate, pb, pbDate, q, stableId, type RecordModel } from "../pb";
 import { activeAt, allAssignments } from "./assignments";
-import { analyticsConfig } from "./settings";
+import { analyticsConfig, impressionsParams } from "./settings";
 import { activeZoneShapes, zoneNames } from "./zones";
 
 export async function loadPoints(bagId: string, from: Date, to: Date): Promise<TrackPoint[]> {
@@ -71,15 +78,38 @@ async function attributeShifts(bagId: string, a: TrackAnalytics): Promise<ShiftS
 
 // ── Bag days ──────────────────────────────────────────────────────────────────
 
+let indexed: { stations: unknown; index: StationIndex } | null = null;
+/** TfL stations with their daily taps, indexed for "nearest within 150 m". */
+export async function stationIndex(): Promise<StationIndex> {
+  const f = await footfall();
+  if (!indexed || indexed.stations !== f.stations) indexed = { stations: f.stations, index: indexStations(f.stations) };
+  return indexed.index;
+}
+
 export async function computeBagDay(bag: RecordModel, day: string): Promise<void> {
   const [start, end] = londonDayBounds(day);
   const pts = await loadPlacedPoints(bag.id, start, end, gpsIntervalMs(bag));
   const a = analyseTrack(pts, await activeZoneShapes(), await analyticsConfig());
   const playRows = await getAll<RecordModel>("plays", {
     filter: `bag = ${q(bag.id)} && hour >= ${q(pbDate(start))} && hour < ${q(pbDate(end))}`,
-    fields: "plays",
+    fields: "plays,seconds,hour",
   });
   const plays = playRows.reduce((s, r) => s + (r.plays || 0), 0);
+  // Time on screen per hour, and the estimated impressions while it was on.
+  const onScreen = new Map<number, number>();
+  for (const r of playRows) {
+    const h = parsePbDate(r.hour)?.getTime();
+    if (h !== undefined) onScreen.set(h, (onScreen.get(h) ?? 0) + (r.seconds || 0));
+  }
+  const clock = londonClock();
+  const screenHourly = Array.from({ length: 24 }, () => 0);
+  for (const [h, sec] of onScreen) screenHourly[clock(h).hour] += Math.round(Math.min(3600, sec));
+  const impressionsHourly = Array.from({ length: 24 }, () => 0);
+  const index = await stationIndex();
+  const params = await impressionsParams();
+  for (const part of exposureParts(pts, index, (t) => Math.min(1, (onScreen.get(Math.floor(t / 3600_000) * 3600_000) ?? 0) / 3600), params, clock)) {
+    impressionsHourly[clock(part.t).hour] += part.impressions;
+  }
   const iso = (t: number) => new Date(t).toISOString();
   const data = {
     id: stableId(`bag_day:${bag.id}:${day}`),
@@ -99,6 +129,9 @@ export async function computeBagDay(bag: RecordModel, day: string): Promise<void
     signal_gaps: a.gaps.map((g) => ({ ...g, start: iso(g.start), end: iso(g.end) })),
     zones: a.zoneSeconds,
     plays,
+    screen_hourly: screenHourly,
+    impressions: Math.round(impressionsHourly.reduce((a, b) => a + b, 0)),
+    impressions_hourly: impressionsHourly.map((v) => Math.round(v * 10) / 10),
     computed_at: pbDate(new Date()),
   };
   const batch = pb.createBatch();
@@ -126,6 +159,7 @@ export async function toBagDayDto(r: RecordModel, bagName: string): Promise<BagD
     gaps: r.gaps ?? 0,
     km: r.km ?? 0,
     plays: r.plays ?? 0,
+    impressions: r.impressions ?? 0,
     zones: Object.entries((r.zones ?? {}) as Record<string, number>)
       .map(([zoneId, seconds]) => ({ zoneId, name: names.get(zoneId) ?? "Removed zone", seconds }))
       .sort((a, b) => b.seconds - a.seconds),
@@ -145,6 +179,35 @@ export async function bagDays(bagIds: string[] | null, fromDay: string, toDay: s
 }
 
 // ── Routes (what the map draws) ───────────────────────────────────────────────
+
+/** Stretches near TfL stations while the screen was on, with their estimated impressions (all ads). */
+async function stationVisits(bagId: string, pts: TrackPoint[], from: Date, to: Date, params: ImpressionsParams): Promise<StationVisit[]> {
+  const rows = await getAll<RecordModel>("plays", {
+    filter: `bag = ${q(bagId)} && hour >= ${q(pbDate(from))} && hour < ${q(pbDate(to))}`,
+    fields: "hour,seconds",
+  });
+  const onScreen = new Map<number, number>();
+  for (const r of rows) {
+    const h = parsePbDate(r.hour)?.getTime();
+    if (h !== undefined) onScreen.set(h, (onScreen.get(h) ?? 0) + (r.seconds || 0));
+  }
+  const parts = exposureParts(pts, await stationIndex(), (t) => Math.min(1, (onScreen.get(Math.floor(t / 3600_000) * 3600_000) ?? 0) / 3600), params);
+  const out: (StationVisit & { lastT: number })[] = [];
+  let cur: (StationVisit & { lastT: number }) | null = null;
+  for (const p of parts) {
+    if (!p.station) continue;
+    // A new visit when the station changes or after 5 minutes away.
+    if (!cur || cur.key !== p.station.key || p.t - cur.lastT > 5 * 60_000) {
+      if (cur) out.push(cur);
+      cur = { key: p.station.key, name: p.station.name, lat: p.station.lat, lng: p.station.lng, start: new Date(p.t).toISOString(), end: "", impressions: 0, lastT: p.t };
+    }
+    cur.lastT = p.t;
+    cur.end = new Date(p.t + Math.max(30, p.seconds) * 1000).toISOString();
+    cur.impressions += p.impressions;
+  }
+  if (cur) out.push(cur);
+  return out.map(({ lastT: _lastT, ...v }) => ({ ...v, impressions: Math.round(v.impressions * 10) / 10 }));
+}
 
 export async function buildRoute(bag: RecordModel, from: Date, to: Date, day: string | null): Promise<RouteResponse> {
   const cfg = await analyticsConfig();
@@ -174,7 +237,10 @@ export async function buildRoute(bag: RecordModel, from: Date, to: Date, day: st
   flush();
 
   const iso = (t: number) => new Date(t).toISOString();
+  const params = await impressionsParams();
   return {
+    stationVisits: await stationVisits(bag.id, pts, from, to, params),
+    catchmentM: params.radiusM,
     bagId: bag.id,
     bagName: bag.name,
     from: from.toISOString(),

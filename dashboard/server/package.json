@@ -10,7 +10,8 @@
     "test": "vitest run",
     "check": "tsc --noEmit -p .",
     "seed:demo": "tsx --env-file-if-exists=../../.env src/scripts/seed-demo.ts",
-    "recompute": "tsx --env-file-if-exists=../../.env src/scripts/recompute.ts"
+    "recompute": "tsx --env-file-if-exists=../../.env src/scripts/recompute.ts",
+    "footfall": "tsx --env-file-if-exists=../../.env src/scripts/footfall.ts"
   },
   "dependencies": {
     "@digilite/shared": "*",

@@ -283,6 +283,11 @@ const COLLECTIONS = [
       json("signal_gaps", 200000),
       json("zones", 50000),
       int("plays"),
+      // Seconds on screen in each London hour (0–23), and the estimated impressions
+      // while it was on (TfL footfall: see shared/src/impressions.ts), in total and by hour.
+      json("screen_hourly", 2000),
+      int("impressions"),
+      json("impressions_hourly", 4000),
       date("computed_at"),
     ],
     indexes: ["CREATE UNIQUE INDEX idx_bag_days_key ON bag_days (bag, day)", "CREATE INDEX idx_bag_days_day ON bag_days (day)"],
@@ -428,6 +433,14 @@ const COLLECTIONS = [
     indexes: ["CREATE UNIQUE INDEX idx_payroll_period ON payroll_periods (start_day, end_day)"],
   },
   {
+    // TfL station footfall, one row per station: entries and exits per London day
+    // ({"2026-09-28": [entries, exits]}), from TfL's open data, refreshed weekly
+    // (server/src/footfall/tfl.ts). The basis of estimated impressions. Kept permanently.
+    name: "tfl_footfall",
+    fields: [text("key", 120, { required: true }), text("name", 200), number("lat"), number("lng"), json("days", 2000000), updated()],
+    indexes: ["CREATE UNIQUE INDEX idx_tfl_key ON tfl_footfall (key)"],
+  },
+  {
     // One row, key "main". Edited from the dashboard's Settings page.
     name: "app_settings",
     fields: [
@@ -443,6 +456,10 @@ const COLLECTIONS = [
       text("pay_rate", 60),
       number("pay_min_hours"),
       bool("pay_signal_gaps"),
+      // Estimated impressions: working assumptions, to be calibrated (shared/src/impressions.ts).
+      number("impressions_radius_m"),
+      number("impressions_street_pct"),
+      number("impressions_visibility_pct"),
       created(),
       updated(),
     ],
@@ -497,6 +514,9 @@ const SETTINGS_ROW = {
   pay_rate: "",
   pay_min_hours: 0,
   pay_signal_gaps: false,
+  impressions_radius_m: 250,
+  impressions_street_pct: 25,
+  impressions_visibility_pct: 10,
 };
 
 // Six provisional zones where the fleet's routes concentrate. Agree the real set

@@ -315,6 +315,87 @@ function RecomputeCard() {
   );
 }
 
+// ── Impressions ───────────────────────────────────────────────────────────────
+export function ImpressionsSection() {
+  return (
+    <WithSettings>
+      {(s, ro) => <ImpressionsForm key={`${s.impressionsRadiusM}|${s.impressionsStreetPct}|${s.impressionsVisibilityPct}`} s={s} readOnly={ro} />}
+    </WithSettings>
+  );
+}
+
+const IMPRESSION_FIELDS = [
+  {
+    key: "impressionsRadiusM",
+    label: "Station catchment",
+    unit: "metres",
+    min: 25,
+    max: 1000,
+    hint: "A bag within this distance of a TfL station (straight-line, Haversine) counts as near it. Where catchments overlap, only the nearest station counts.",
+  },
+  {
+    key: "impressionsStreetPct",
+    label: "Station users passing the street",
+    unit: "%",
+    min: 0,
+    max: 100,
+    hint: "Of everyone entering or leaving the station that hour, the share assumed to pass along the street where the bag is.",
+  },
+  {
+    key: "impressionsVisibilityPct",
+    label: "Visibility",
+    unit: "%",
+    min: 0,
+    max: 100,
+    hint: "Of those passing, the share assumed to have a reasonable chance to see the screen (movement, direction, distance, obstructions).",
+  },
+] as const;
+
+type ImpressionKey = (typeof IMPRESSION_FIELDS)[number]["key"];
+
+function ImpressionsForm({ s, readOnly }: { s: SettingsDto; readOnly: boolean }) {
+  const { toast, confirm } = useFeedback();
+  const save = useSaveSettings();
+  const recompute = useRecompute();
+  const initial = Object.fromEntries(IMPRESSION_FIELDS.map((f) => [f.key, String(s[f.key])])) as Record<ImpressionKey, string>;
+  const [v, setV] = useState(initial);
+  const errors = Object.fromEntries(IMPRESSION_FIELDS.map((f) => [f.key, rangeError(v[f.key], f.min, f.max)])) as Record<ImpressionKey, string | null>;
+  const dirty = IMPRESSION_FIELDS.some((f) => Number(v[f.key]) !== s[f.key]);
+  const invalid = Object.values(errors).some(Boolean);
+  const submit = async () => {
+    try {
+      await save.mutateAsync(Object.fromEntries(IMPRESSION_FIELDS.map((f) => [f.key, Number(v[f.key])])) as Partial<SettingsDto>);
+      const now = await confirm({
+        title: "Saved. Recompute recent days?",
+        body: "Campaign figures and client reports use the new values straight away. Recompute the last 28 days so the per-day figures on bag pages do too.",
+        confirm: "Recompute the last 28 days",
+      });
+      if (now) {
+        const st = await recompute.mutateAsync(28);
+        toast(`Recomputing ${st.total} bag-days in the background`);
+      } else toast("Impressions assumptions saved");
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  };
+  return (
+    <Card className="flex flex-col gap-5 p-4 md:p-5" aria-label="Impressions">
+      <CardHeader
+        title="Estimated impressions"
+        sub="Impressions = TfL daily station movements × estimated hourly share × time near the station × station users passing the street × visibility × the advertiser's share of screen time. These are working assumptions, not measurements: calibrate them before relying on the figures."
+      />
+      <div className="grid gap-5 sm:grid-cols-3">
+        {IMPRESSION_FIELDS.map((f) => (
+          <Field key={f.key} label={f.label} error={errors[f.key]} hint={f.hint}>
+            <NumberInput value={v[f.key]} onChange={(x) => setV({ ...v, [f.key]: x })} unit={f.unit} min={f.min} max={f.max} disabled={readOnly} />
+          </Field>
+        ))}
+      </div>
+      <FormFooter dirty={dirty} invalid={invalid} busy={save.isPending || recompute.isPending} onSave={() => void submit()} onReset={() => setV(initial)} />
+    </Card>
+  );
+}
+
 // ── Pay rules ─────────────────────────────────────────────────────────────────
 export function PaySection() {
   return (

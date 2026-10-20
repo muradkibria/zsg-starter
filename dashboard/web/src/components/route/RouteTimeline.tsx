@@ -9,7 +9,7 @@ import { Pause, Play, X } from "lucide-react";
 import type { RouteResponse } from "@digilite/shared";
 import { londonHour } from "@digilite/shared";
 import { time } from "@/lib/format";
-import type { Replay } from "./useReplay";
+import { impressionsUntil, type Replay } from "./useReplay";
 
 const HOUR = 3600_000;
 
@@ -95,6 +95,9 @@ export function RouteTimeline({
   const stateNow = [moving === "moving" ? "Moving" : moving === "stopped" ? "Stopped" : moving === "gap" ? "No signal" : null, zoneNow]
     .filter(Boolean)
     .join(" · ");
+  const visits = route.stationVisits ?? [];
+  const seen = at === null ? null : impressionsUntil(visits, at);
+  const impressionsNow = seen && visits.length ? `${seen.near ? `near ${seen.near.name} · ` : ""}≈ ${Math.round(seen.total).toLocaleString("en-GB")} impressions so far` : "";
 
   return (
     <div className="flex flex-col gap-2" aria-label="Timeline">
@@ -121,7 +124,10 @@ export function RouteTimeline({
                 {replay.playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
               </button>
               <span className="num shrink-0 font-display text-[15px] font-semibold">{time(at)}</span>
-              <span className="min-w-0 flex-1 truncate text-ink-2">{stateNow}</span>
+              <span className="min-w-0 flex-1 truncate text-ink-2">
+                {stateNow}
+                {impressionsNow && <span className="text-amber-ink">{stateNow ? " · " : ""}{impressionsNow}</span>}
+              </span>
               <button
                 onClick={replay.nextSpeed}
                 title={`Playing ${replay.speed / 60} minute${replay.speed === 60 ? "" : "s"} of the day each second`}
@@ -182,6 +188,23 @@ export function RouteTimeline({
             ))}
           </div>
         </div>
+        {visits.length > 0 && (
+          <div className="flex items-center gap-3">
+            <span className={clsx("shrink-0 text-[11px] text-muted", labelW)} title="Time within a TfL station's catchment with the screen on">
+              Stations
+            </span>
+            <div className="relative h-4 flex-1 overflow-hidden rounded bg-paper">
+              {visits.map((v, i) => (
+                <div
+                  key={i}
+                  title={`${v.name} ${time(v.start)}–${time(v.end)} · ≈ ${Math.round(v.impressions).toLocaleString("en-GB")} estimated impressions`}
+                  className="absolute inset-y-0 border-l border-white bg-[#e8b26a]"
+                  style={{ left: `${pos(v.start)}%`, width: `${width(v.start, v.end)}%` }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
         {!compact && (
           <div className="flex items-center gap-3">
             <span className={clsx("shrink-0 text-[11px] text-muted", labelW)}>On screen</span>
@@ -233,6 +256,7 @@ export function RouteTimeline({
           <Legend color="#b7791f" label="Stopped 15 min+" />
           <Legend pattern label="No signal" />
           <Legend color="#dce3f3" label="In a zone" />
+          {visits.length > 0 && <Legend color="#e8b26a" label="Near a TfL station (estimated impressions)" />}
         </div>
       )}
     </div>

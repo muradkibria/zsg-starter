@@ -4,12 +4,12 @@
 
 import { Link, useSearchParams } from "react-router";
 import clsx from "clsx";
-import { Cable, ChevronLeft, ChevronRight, ListChecks, Lock, Route, ShieldCheck, SlidersHorizontal, Users, Wallet } from "lucide-react";
+import { Cable, ChevronLeft, Eye, ChevronRight, ListChecks, Lock, Route, ShieldCheck, SlidersHorizontal, Users, Wallet } from "lucide-react";
 import type { Permission } from "@digilite/shared";
 import { Notice, Page, PageHeader } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
 import { AuditSection } from "./AuditSection";
-import { DefaultsSection, PaySection, PrivacySection, TrackingSection } from "./RuleSections";
+import { DefaultsSection, ImpressionsSection, PaySection, PrivacySection, TrackingSection } from "./RuleSections";
 import { ChangesSection, ColorlightSection } from "./SystemSections";
 import { TeamSection } from "./TeamSection";
 
@@ -28,6 +28,7 @@ const SECTIONS: Section[] = [
   { key: "changes", label: "Changes to bags", desc: "Safety switch and the test bag", icon: ShieldCheck, render: () => <ChangesSection /> },
   { key: "defaults", label: "Fleet defaults", desc: "Fleet loop and brightness", icon: SlidersHorizontal, render: () => <DefaultsSection /> },
   { key: "tracking", label: "Tracking rules", desc: "Shifts, signal gaps and stops", icon: Route, render: () => <TrackingSection /> },
+  { key: "impressions", label: "Impressions", desc: "Assumptions behind estimated impressions", icon: Eye, render: () => <ImpressionsSection /> },
   { key: "pay", label: "Pay rules", desc: "Rate, minimum hours, signal gaps", icon: Wallet, render: () => <PaySection /> },
   { key: "privacy", label: "Data & privacy", desc: "Who sees what; everything is kept", icon: Lock, render: () => <PrivacySection /> },
   { key: "audit", label: "Audit log", desc: "Every change, in plain English", icon: ListChecks, perm: "audit.view", render: () => <AuditSection /> },

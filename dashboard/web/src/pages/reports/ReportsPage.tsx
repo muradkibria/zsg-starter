@@ -176,7 +176,7 @@ export default function ReportsPage() {
                 {mentionsEstimate(summary) ? (
                   <p className="m-0 flex items-start gap-1.5 text-xs font-semibold text-amber-ink">
                     <AlertTriangle className="mt-px size-3.5 shrink-0" />
-                    It mentions reach, views or audience. Estimated figures stay out of reports until the method is agreed.
+                    It mentions reach, views or audience. Keep the summary to measured numbers: the estimated impressions have their own labelled box, with their method.
                   </p>
                 ) : edited ? (
                   <p className="m-0 text-xs text-muted">Edited by you. Check any number you changed against the measured figures in the preview.</p>
