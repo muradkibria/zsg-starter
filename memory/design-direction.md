@@ -61,3 +61,6 @@ Bag and rider pages each carry their own map (last route, and where the rider us
 - **Rounds 1–2** are history.
 
 Real data comes from the 29 Sep 2026 snapshot (bag states, routes, zones). Rider names, team names, campaign dates/plays and the reach estimate are samples or placeholders.
+
+## Copy style (2026-10-24)
+Write UI copy as plain, complete sentences that say what happens: "You can replace your code at any time. Your current code will stop working." Avoid clipped, punchy or cute fragments ("Six digits, yours alone.", "Never riders, routes or…", "It's all they need"), clever asides and slogan-like phrasing. They read as gimmicky and machine-written.

@@ -84,8 +84,8 @@ function TeamList() {
     const ok = await confirm({
       title: m.hasCode ? `Give ${m.name} a new code?` : `Give ${m.name} a code?`,
       body: m.hasCode
-        ? "Their current code stops working and they're signed out. You'll see the new one once, to pass on."
-        : "You'll see it once, to pass on.",
+        ? "Their current code will stop working and they'll be signed out. The new code is shown once so you can send it to them."
+        : "The code is shown once so you can send it to them.",
       confirm: m.hasCode ? "New code" : "Make a code",
       danger: m.hasCode,
     });
@@ -251,7 +251,7 @@ function InviteForm({ busy, onCancel, onSubmit }: { busy: boolean; onCancel: () 
           ))}
         </Select>
       </Field>
-      <p className="m-0 text-xs text-muted">We'll make a six-digit sign-in code for them. You'll see it once, to pass on privately.</p>
+      <p className="m-0 text-xs text-muted">A six-digit sign-in code will be created for them. It is shown once, so send it to them directly.</p>
       <div className="flex justify-end gap-2">
         <Button onClick={onCancel} disabled={busy}>
           Cancel
@@ -289,7 +289,7 @@ function CodeReveal({ result, kind, onClose }: { result: TeamCodeResult; kind: "
       <p className="m-0">
         {kind === "self"
           ? "Use it next time you sign in. Your old code has stopped working, and you're signed out everywhere else."
-          : `Give ${result.member.name} this code. It's all they need to sign in.`}
+          : `Send this code to ${result.member.name}. They use it to sign in.`}
       </p>
       <div className="mt-4 flex items-center gap-2 rounded-xl border border-line bg-paper p-2 pl-3">
         <code className="num min-w-0 flex-1 truncate font-mono text-[22px] font-semibold tracking-[0.3em] text-ink" aria-label="Sign-in code">
@@ -301,7 +301,7 @@ function CodeReveal({ result, kind, onClose }: { result: TeamCodeResult; kind: "
       </div>
       <Notice tone="amber">
         <span className="block pt-0.5">
-          {kind === "self" ? "This is the only time it's shown." : "This is the only time it's shown. Share it privately, not in a group chat."}
+          {kind === "self" ? "This code won't be shown again." : "This code won't be shown again. Send it to them directly rather than in a shared channel."}
         </span>
       </Notice>
     </Modal>
@@ -434,7 +434,7 @@ function CodeCard() {
   };
   return (
     <Card className="flex flex-col gap-3 p-4 md:p-5" aria-label="Your sign-in code">
-      <CardHeader title="Your sign-in code" sub="Six digits, yours alone. Get a new one if someone may have seen it." />
+      <CardHeader title="Your sign-in code" sub="You can replace your code at any time. Your current code will stop working." />
       <div>
         <Button icon={<KeyRound className="size-4" />} loading={change.isPending} onClick={() => void getNew()}>
           Get a new code

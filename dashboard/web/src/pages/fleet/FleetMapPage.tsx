@@ -484,7 +484,7 @@ function SelectedPanel({
             <Avatar name={bag?.rider?.name ?? bag?.name ?? "Bag"} size={34} />
             <div>
               <div className="font-display text-base font-semibold">{bag?.name}</div>
-              <div className="text-xs text-muted">{bag?.rider ? `carried by ${bag.rider.name}` : "No rider on this bag"}</div>
+              <div className="text-xs text-muted">{bag?.rider ? `${bag.rider.name}` : "No rider on this bag"}</div>
             </div>
           </div>
           <DayPicker bagId={bagId} day={day} setDay={setDay} current={r?.day ?? null} />

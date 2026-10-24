@@ -392,7 +392,7 @@ function BagCard({ r, onGive }: { r: RiderDetail; onGive?: () => void }) {
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <BagGlyph />
         <div className="min-w-0">
-          <div className="text-xs text-muted">{b.upcoming ? `Gets it from ${shortDate(b.since)}` : "Carrying"}</div>
+          <div className="text-xs text-muted">{b.upcoming ? `Gets it from ${shortDate(b.since)}` : ""}</div>
           <Link to={`/bags/${b.id}`} className="font-display text-xl font-semibold text-ink no-underline hover:underline">
             {b.name}
           </Link>

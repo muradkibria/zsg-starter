@@ -79,7 +79,7 @@ function CampaignBody({ d }: { d: PortalCampaignDetail }) {
 
       {days.length > 1 && (
         <Card className="flex flex-col gap-3 p-4 md:p-5" aria-label="Plays per day">
-          <CardHeader title="Plays per day" sub="London time. Hover or tap a day for its figures." />
+          <CardHeader title="Plays per day" sub="Select a day to see its figures. Times are London time." />
           <DailyBars days={days} height={150} />
         </Card>
       )}

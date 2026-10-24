@@ -98,7 +98,7 @@ export function RouteTimeline({
   const bins = route.impressions;
   const hasImpressions = !!bins && bins.values.some((v) => v > 0);
   const maxBin = hasImpressions ? Math.max(...bins.values) : 1;
-  const impressionsNow = at !== null && hasImpressions ? `≈ ${roundEstimate(impressionsUntil(bins, at)).toLocaleString("en-GB")} impressions so far` : "";
+  const impressionsNow = at !== null && hasImpressions ? `≈ ${roundEstimate(impressionsUntil(bins, at)).toLocaleString("en-GB")} impressions` : "";
 
   return (
     <div className="flex flex-col gap-2" aria-label="Timeline">

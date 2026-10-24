@@ -14,7 +14,7 @@ export const RIDER_STAGE_LABEL: Record<RiderStage, string> = {
   applied: "Applied",
   checked: "Documents checked",
   waiting: "Waiting for a bag",
-  active: "Carrying a bag",
+  active: "Assigned a bag",
   ended: "Ended",
 };
 

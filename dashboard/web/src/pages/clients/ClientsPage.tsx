@@ -41,8 +41,8 @@ export default function ClientsPage() {
     const ok = await confirm({
       title: c.hasCode ? `Give ${c.name} a new code?` : `Give ${c.name} a code?`,
       body: c.hasCode
-        ? "Their current code stops working and they're signed out of the portal. You'll see the new one once, to pass on."
-        : "You'll see it once, to pass on.",
+        ? "Their current code will stop working and they'll be signed out of the portal. The new code is shown once so you can send it to them."
+        : "The code is shown once so you can send it to them.",
       confirm: c.hasCode ? "New code" : "Make a code",
       danger: c.hasCode,
     });
@@ -58,7 +58,7 @@ export default function ClientsPage() {
     if (disabled) {
       const ok = await confirm({
         title: `Switch off ${c.name}'s portal?`,
-        body: "They're signed out straight away and can't sign in until you switch it back on. Their campaigns and reports aren't affected.",
+        body: "They will be signed out and won't be able to sign in until you switch their access back on. Their campaigns and reports stay as they are.",
         confirm: "Switch off",
         danger: true,
       });
@@ -87,7 +87,7 @@ export default function ClientsPage() {
       <Notice tone="info">
         <span className="block pt-0.5">
           Clients sign in on the same page as the team, <strong>{signInUrl()}</strong>, and see only the confirmed campaigns linked to them: plays, time on
-          screen, estimated impressions and their reports. Never riders, routes or other advertisers.
+          screen, estimated impressions and their reports. They can't see riders, routes or other advertisers' campaigns.
         </span>
       </Notice>
 
@@ -311,7 +311,7 @@ function ClientDialog({
             })}
           </ul>
         </fieldset>
-        {!client && <p className="m-0 text-xs text-muted">We'll make a six-digit sign-in code for them. You'll see it once, to pass on privately.</p>}
+        {!client && <p className="m-0 text-xs text-muted">A six-digit sign-in code will be created for them. It is shown once, so send it to them directly.</p>}
       </form>
     </Modal>
   );
@@ -353,7 +353,7 @@ function CodeReveal({ result, kind, onClose }: { result: ClientCodeResult; kind:
         {copied === "both" ? "Copied" : "Copy a message with the link and code"}
       </Button>
       <Notice tone="amber">
-        <span className="block pt-0.5">This is the only time it's shown. Share it privately with the client.</span>
+        <span className="block pt-0.5">This code won't be shown again. Send it to the client directly.</span>
       </Notice>
     </Modal>
   );

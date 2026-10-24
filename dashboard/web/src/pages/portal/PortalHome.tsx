@@ -17,7 +17,7 @@ export default function PortalHome() {
 
   return (
     <Page width="narrow">
-      <PageHeader title={data ? `Welcome, ${data.client.name}` : "Welcome"} sub="Your campaigns with DigiLite, measured by the bags that carry them. Open one for its figures and reports." />
+      <PageHeader title={data ? `Welcome, ${data.client.name}` : "Welcome"} sub="Select a campaign to see its figures and download its reports." />
       {overview.isLoading && <Spinner label="Loading your campaigns…" />}
       {overview.error && <ErrorState error={overview.error} retry={() => void overview.refetch()} />}
       {data && data.campaigns.length === 0 && (
