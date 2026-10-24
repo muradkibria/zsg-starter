@@ -3,15 +3,20 @@ import { Navigate, useSearchParams } from "react-router";
 import { useAuth } from "@/lib/auth";
 import { Button, Field, Input } from "@/components/ui";
 
-/** Everyone signs in with their own six-digit code; it goes as soon as the sixth digit is in. */
+/**
+ * Everyone signs in with their own six-digit code; it goes as soon as the sixth
+ * digit is in. The team lands in the hub, clients in their portal.
+ */
 export default function LoginPage() {
-  const { user, signIn } = useAuth();
+  const { user, client, signIn } = useAuth();
   const [params] = useSearchParams();
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (user) return <Navigate to={params.get("next") || "/map"} replace />;
+  const next = params.get("next");
+  if (user) return <Navigate to={next && !next.startsWith("/portal") ? next : "/map"} replace />;
+  if (client) return <Navigate to={next?.startsWith("/portal") ? next : "/portal"} replace />;
 
   const send = async (value: string) => {
     if (busy) return;
@@ -37,7 +42,7 @@ export default function LoginPage() {
       <div className="w-full max-w-[400px]">
         <div className="mb-8 flex items-center justify-center gap-3">
           <img src="/digilite-mark.png" alt="" className="size-10" />
-          <span className="font-display text-2xl font-bold tracking-wide text-navy">DigiLite Hub</span>
+          <span className="font-display text-2xl font-bold tracking-wide text-navy">DigiLite</span>
         </div>
         <form onSubmit={submit} className="card flex flex-col gap-4 p-6 shadow-[var(--shadow-float)]">
           <h1 className="m-0 font-display text-2xl font-semibold">Sign in</h1>

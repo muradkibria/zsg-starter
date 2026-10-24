@@ -2,18 +2,23 @@
 // unique); the API checks it and issues its own short-lived session cookie
 // (httpOnly, SameSite=Lax). The cookie carries the person's session version, which
 // moves on whenever they get a new code, so that signs them out everywhere else.
+//
+// Clients sign in on the same page with their own code (`clients.login_code`).
+// Codes are unique across the team and clients together, so the code alone says
+// who it is. A client's cookie is marked as one (`k: "c"`) and only ever sets
+// req.portalClient, which the team's API ignores: clients reach the portal and nothing else.
 
 import { randomBytes } from "node:crypto";
 import type { NextFunction, Request, Response, Router } from "express";
 import express from "express";
 import { jwtVerify, SignJWT } from "jose";
 import { z } from "zod";
-import type { Role, SessionUser } from "@digilite/shared";
+import type { ClientSession, Role, SessionUser } from "@digilite/shared";
 import { config } from "../config";
 import { audit } from "../domain/audit";
 import { randomCode, SignInGate } from "../domain/signin";
 import { logger } from "../log";
-import { getFirst, getOneOrNull, pb, q, type RecordModel } from "../pb";
+import { getFirst, getOneOrNull, pb, pbDate, q, type RecordModel } from "../pb";
 import { HttpError, parse } from "./http";
 
 const COOKIE = "dl_session";
@@ -46,13 +51,39 @@ export function forgetUser(id: string) {
   userCache.delete(id);
 }
 
-/** A code nobody on the team has. */
+const clientCache = new Map<string, { at: number; known: { client: ClientSession; version: number } | null }>();
+
+const toClient = (r: RecordModel): ClientSession => ({ kind: "client", id: r.id, name: r.name || "Client" });
+
+async function loadClient(id: string) {
+  const hit = clientCache.get(id);
+  if (hit && Date.now() - hit.at < 30000) return hit.known;
+  const rec = await getOneOrNull<RecordModel>("clients", id);
+  const known = rec && !rec.disabled ? { client: toClient(rec), version: rec.session_version || 0 } : null;
+  clientCache.set(id, { at: Date.now(), known });
+  return known;
+}
+
+export function forgetClient(id: string) {
+  clientCache.delete(id);
+}
+
+/** A code nobody on the team, and no client, has. */
 export async function unusedCode(): Promise<string> {
   for (let i = 0; i < 20; i++) {
     const code = randomCode();
-    if (!(await getFirst<RecordModel>("users", `login_code = ${q(code)}`, { fields: "id" }))) return code;
+    const filter = `login_code = ${q(code)}`;
+    const [u, c] = await Promise.all([getFirst<RecordModel>("users", filter, { fields: "id" }), getFirst<RecordModel>("clients", filter, { fields: "id" })]);
+    if (!u && !c) return code;
   }
   throw new HttpError(500, "Couldn't find a free code. Try again.");
+}
+
+/** Give a client a new code, ending their other portal sessions. */
+export async function setClientCode(clientId: string, code: string): Promise<RecordModel> {
+  const rec = await pb.collection("clients").update<RecordModel>(clientId, { login_code: code, "session_version+": 1 });
+  forgetClient(clientId);
+  return rec;
 }
 
 /** PocketBase needs a password on every login record. Nobody uses it: everyone signs in with a code. */
@@ -70,8 +101,8 @@ export async function setCode(userId: string, code: string, keepSignedIn?: { res
   return rec;
 }
 
-async function issue(res: Response, u: SessionUser, version: number) {
-  const token = await new SignJWT({ sub: u.id, sv: version })
+async function issue(res: Response, u: { id: string }, version: number, kind?: "client") {
+  const token = await new SignJWT(kind === "client" ? { sub: u.id, sv: version, k: "c" } : { sub: u.id, sv: version })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${TTL_HOURS}h`)
@@ -86,15 +117,20 @@ async function issue(res: Response, u: SessionUser, version: number) {
   });
 }
 
-/** Attaches req.user when a valid session cookie is present. */
+/** Attaches req.user (or req.portalClient, for a portal session) when a valid session cookie is present. */
 export async function sessionMiddleware(req: Request, _res: Response, next: NextFunction) {
   const token = req.cookies?.[COOKIE];
   if (!token) return next();
   try {
     const { payload } = await jwtVerify(token, secret);
-    const known = payload.sub ? await loadUser(payload.sub) : null;
     const version = typeof payload.sv === "number" ? payload.sv : 0;
-    if (known && known.version === version) req.user = known.user;
+    if (payload.k === "c") {
+      const known = payload.sub ? await loadClient(payload.sub) : null;
+      if (known && known.version === version) req.portalClient = known.client;
+    } else {
+      const known = payload.sub ? await loadUser(payload.sub) : null;
+      if (known && known.version === version) req.user = known.user;
+    }
   } catch {
     // expired or tampered — treated as signed out
   }
@@ -125,12 +161,24 @@ export function authRouter(): Router {
     const blocked = gate.blocked(address);
     if (blocked) throw new HttpError(429, blocked);
     const rec = await getFirst<RecordModel>("users", `login_code = ${q(code)}`);
-    if (!rec) {
+    const clientRec = rec ? null : await getFirst<RecordModel>("clients", `login_code = ${q(code)}`);
+    if (!rec && !clientRec) {
       gate.wrong(address);
       log.warn(`wrong sign-in code from ${address}`);
       throw new HttpError(401, "That code isn't right");
     }
     gate.right(address);
+    if (clientRec) {
+      if (clientRec.disabled) throw new HttpError(403, "This login has been switched off. Please contact DigiLite.");
+      const c = toClient(clientRec);
+      const version = clientRec.session_version || 0;
+      clientCache.set(c.id, { at: Date.now(), known: { client: c, version } });
+      await issue(res, c, version, "client");
+      await pb.collection("clients").update(c.id, { last_sign_in: pbDate(new Date()) }).catch(() => {});
+      await audit({ id: "", name: `${c.name} (client)` }, "auth.client_login", `${c.name} signed in to the client portal`, { type: "client", id: c.id });
+      return void res.json(c);
+    }
+    if (!rec) throw new HttpError(401, "That code isn't right");
     if (rec.disabled) throw new HttpError(403, "This login has been switched off");
     const u = toUser(rec);
     const version = rec.session_version || 0;
@@ -146,8 +194,9 @@ export function authRouter(): Router {
   });
 
   r.get("/me", (req, res) => {
-    if (!req.user) throw new HttpError(401, "Please sign in");
-    res.json(req.user);
+    const me = req.user ?? req.portalClient;
+    if (!me) throw new HttpError(401, "Please sign in");
+    res.json(me);
   });
 
   return r;

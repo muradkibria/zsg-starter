@@ -45,7 +45,7 @@ export const ROLES: Role[] = ["owner", "ops", "sales", "viewer"];
 export const ROLE_SUMMARY: Record<Role, string> = {
   owner: "Everything, including settings and the team.",
   ops: "Everything except settings and the team.",
-  sales: "Campaigns, client reports, loops and exports. No rider documents.",
+  sales: "Campaigns, client reports and portal logins, loops and exports. No rider documents.",
   viewer: "Can look, can't change.",
 };
 
@@ -57,6 +57,7 @@ export const PERMISSION_ROWS: { label: string; perms: Permission[] }[] = [
   { label: "Open rider documents", perms: ["riders.documents"] },
   { label: "Edit ads, loops and schedules", perms: ["loops.edit", "schedules.edit"] },
   { label: "Campaigns and client reports", perms: ["campaigns.view", "campaigns.edit"] },
+  { label: "Client portal logins", perms: ["clients.edit"] },
   { label: "Payroll", perms: ["payroll.view", "payroll.approve"] },
   { label: "Exports", perms: ["exports.run"] },
   { label: "Edit zones", perms: ["zones.edit"] },

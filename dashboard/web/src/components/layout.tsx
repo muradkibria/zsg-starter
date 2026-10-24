@@ -1,22 +1,6 @@
 import { NavLink, Outlet, useLocation } from "react-router";
 import clsx from "clsx";
-import {
-  Bell,
-  CalendarClock,
-  ClipboardList,
-  Download,
-  FileText,
-  LayoutGrid,
-  LogOut,
-  Map as MapIcon,
-  Megaphone,
-  MoreHorizontal,
-  Settings,
-  ShoppingBag,
-  CircleDashed,
-  Users,
-  Wallet,
-} from "lucide-react";
+import { Bell, Building2, CalendarClock, CircleDashed, ClipboardList, Download, FileText, LayoutGrid, LogOut, Map as MapIcon, Megaphone, MoreHorizontal, Settings, ShoppingBag, Users, Wallet } from "lucide-react";
 import type { Permission } from "@digilite/shared";
 import { ROLE_LABEL } from "@digilite/shared";
 import { useAuth } from "@/lib/auth";
@@ -42,6 +26,7 @@ export const NAV: NavItem[] = [
   { to: "/payroll", label: "Payroll", icon: Wallet, perm: "payroll.view", group: "main" },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone, perm: "campaigns.view", group: "commercial" },
   { to: "/reports", label: "Client reports", icon: FileText, perm: "campaigns.view", group: "commercial" },
+  { to: "/clients", label: "Clients", icon: Building2, perm: "clients.edit", group: "commercial" },
   { to: "/zones", label: "Zones", icon: CircleDashed, perm: "fleet.view", group: "admin" },
   { to: "/settings", label: "Settings", icon: Settings, perm: "settings.view", group: "admin" },
 ];

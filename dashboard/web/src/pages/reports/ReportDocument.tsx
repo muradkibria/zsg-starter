@@ -10,7 +10,7 @@
 // switched on. Layout follows the paper's own width (container queries), so it's
 // the same on screen, on a phone and on A4.
 
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import clsx from "clsx";
 import { roundEstimate, type CampaignReport, type ReportDay, type ReportSection } from "@digilite/shared";
 import { date as fmtDate } from "@/lib/format";
@@ -39,6 +39,7 @@ export function ReportDocument({
   onMapSnapshot,
   mapImages = {},
   className,
+  paperRef,
 }: {
   report: CampaignReport;
   sections: ReportSection[];
@@ -46,6 +47,8 @@ export function ReportDocument({
   onMapSnapshot?: (key: string, url: string) => void;
   mapImages?: Record<string, string>;
   className?: string;
+  /** The paper itself (for saving it as a PDF) */
+  paperRef?: Ref<HTMLElement>;
 }) {
   const on = (k: ReportSection) => sections.includes(k);
   const s = report.stats;
@@ -66,63 +69,65 @@ export function ReportDocument({
   );
 
   return (
-    <article aria-label="Client report" className={clsx("dl-report-paper @container mx-auto w-full max-w-[794px] overflow-hidden rounded-sm bg-white text-ink shadow-[0_18px_48px_rgb(16_24_43/0.16)]", className)}>
+    <article ref={paperRef} aria-label="Client report" className={clsx("dl-report-paper @container mx-auto w-full max-w-[794px] overflow-hidden rounded-sm bg-white text-ink shadow-[0_18px_48px_rgb(16_24_43/0.16)]", className)}>
       {/* ── 1 · At a glance ───────────────────────────────────────────── */}
-      <header className="flex flex-col gap-4 bg-navy px-6 py-5 text-white @xl:flex-row @xl:items-center @xl:px-9 @xl:py-6">
-        <div className="flex items-center gap-3">
-          <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-white p-1.5">
-            <img src="/digilite-mark.png" alt="" className="size-full" />
-          </span>
-          <div>
-            <div className="font-display text-[22px] leading-tight font-bold tracking-wide">DigiLite</div>
-            <div className="text-[10.5px] font-semibold tracking-[0.2em] text-white/70">PROOF OF PLAY</div>
+      <div className="dl-report-first">
+        <header className="flex flex-col gap-4 bg-navy px-6 py-5 text-white @xl:flex-row @xl:items-center @xl:px-9 @xl:py-6">
+          <div className="flex items-center gap-3">
+            <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-white p-1.5">
+              <img src="/digilite-mark.png" alt="" className="size-full" />
+            </span>
+            <div>
+              <div className="font-display text-[22px] leading-tight font-bold tracking-wide">DigiLite</div>
+              <div className="text-[10.5px] font-semibold tracking-[0.2em] text-white/70">PROOF OF PLAY</div>
+            </div>
           </div>
-        </div>
-        <div className="min-w-0 @xl:ml-auto @xl:text-right">
-          <div className="font-display text-lg leading-snug font-semibold">
-            {c.advertiser} · {c.name}
+          <div className="min-w-0 @xl:ml-auto @xl:text-right">
+            <div className="font-display text-lg leading-snug font-semibold">
+              {c.advertiser} · {c.name}
+            </div>
+            <div className="text-[13px] text-white/80">{dayRange(report.fromDay, report.toDay, { long: true })}</div>
           </div>
-          <div className="text-[13px] text-white/80">{dayRange(report.fromDay, report.toDay, { long: true })}</div>
+        </header>
+
+        <div className="flex flex-col gap-6 px-6 py-6 @xl:px-9 @xl:py-7">
+          {c.demo && <p className="m-0 rounded-md border border-dashed border-line px-3 py-1.5 text-xs text-muted">Demo campaign — a sample contract used for walkthroughs. The plays and routes shown are real measurements.</p>}
+
+          {on("summary") && summary.trim() && <p className="m-0 text-[15px] leading-relaxed whitespace-pre-line text-ink">{summary.trim()}</p>}
+
+          {(on("measured") || showEstimate) && (
+            <section className={clsx("grid grid-cols-2 gap-2 break-inside-avoid", on("measured") && showEstimate && hasPlays ? "@xl:grid-cols-5" : "@xl:grid-cols-4")}>
+              {on("measured") && (
+                <>
+                  <Kpi label="Plays" value={n(t.plays)} />
+                  <Kpi label="Time on screen" value={screenHours(t.seconds)} />
+                  <Kpi label="Bags" value={n(t.bags)} sub={`on ${t.daysWithPlays} ${t.daysWithPlays === 1 ? "day" : "days"}`} />
+                  <Kpi label="Distance ridden" value={kmText(t.km)} sub="by those bags, on the days it played" />
+                </>
+              )}
+              {showEstimate && hasPlays && <Kpi label="Estimated impressions" value={est(imp.total)} />}
+            </section>
+          )}
+
+          {hasPlays && on("map") && report.hexes.length > 0 && (
+            <section className="flex flex-col gap-1.5 break-inside-avoid">
+              <h3 className="m-0 text-sm font-bold">Where it played</h3>
+              {map(
+                "period",
+                <HeatMap
+                  hexes={report.hexes}
+                  label="Heat map of where the ad played"
+                  className="absolute inset-0"
+                  onSnapshot={onMapSnapshot && ((url) => onMapSnapshot("period", url))}
+                />,
+                "Heat map of where the ad played",
+              )}
+              <HeatLegend />
+            </section>
+          )}
+
+          {!hasPlays && <p className="m-0 rounded-lg bg-paper px-4 py-3 text-[13px] text-muted">No plays were recorded in this period, so there are no charts or maps to show.</p>}
         </div>
-      </header>
-
-      <div className="flex flex-col gap-6 px-6 py-6 @xl:px-9 @xl:py-7">
-        {c.demo && <p className="m-0 rounded-md border border-dashed border-line px-3 py-1.5 text-xs text-muted">Demo campaign — a sample contract used for walkthroughs. The plays and routes shown are real measurements.</p>}
-
-        {on("summary") && summary.trim() && <p className="m-0 text-[15px] leading-relaxed whitespace-pre-line text-ink">{summary.trim()}</p>}
-
-        {(on("measured") || showEstimate) && (
-          <section className={clsx("grid grid-cols-2 gap-2 break-inside-avoid", on("measured") && showEstimate && hasPlays ? "@xl:grid-cols-5" : "@xl:grid-cols-4")}>
-            {on("measured") && (
-              <>
-                <Kpi label="Plays" value={n(t.plays)} />
-                <Kpi label="Time on screen" value={screenHours(t.seconds)} />
-                <Kpi label="Bags" value={n(t.bags)} sub={`on ${t.daysWithPlays} ${t.daysWithPlays === 1 ? "day" : "days"}`} />
-                <Kpi label="Distance ridden" value={kmText(t.km)} sub="by those bags, on the days it played" />
-              </>
-            )}
-            {showEstimate && hasPlays && <Kpi label="Estimated impressions" value={est(imp.total)} />}
-          </section>
-        )}
-
-        {hasPlays && on("map") && report.hexes.length > 0 && (
-          <section className="flex flex-col gap-1.5 break-inside-avoid">
-            <h3 className="m-0 text-sm font-bold">Where it played</h3>
-            {map(
-              "period",
-              <HeatMap
-                hexes={report.hexes}
-                label="Heat map of where the ad played"
-                className="absolute inset-0"
-                onSnapshot={onMapSnapshot && ((url) => onMapSnapshot("period", url))}
-              />,
-              "Heat map of where the ad played",
-            )}
-            <HeatLegend />
-          </section>
-        )}
-
-        {!hasPlays && <p className="m-0 rounded-lg bg-paper px-4 py-3 text-[13px] text-muted">No plays were recorded in this period, so there are no charts or maps to show.</p>}
       </div>
 
       {/* ── 2 · When and where ───────────────────────────────────────── */}
@@ -252,7 +257,7 @@ export function ReportDocument({
 
       <footer className="flex flex-col gap-1 border-t border-rule px-6 py-3 text-[11px] text-muted @xl:flex-row @xl:justify-between @xl:px-9">
         <span>
-          {report.riderNames.included ? "Rider names are shown as first name and initial." : "Rider names are not included."} Locations from each bag's GPS. Map data © OpenStreetMap
+          {report.riderNames.included && "Rider names are shown as first name and initial. "}Locations from each bag's GPS. Map data © OpenStreetMap
           contributors.
           {clipped && ` Play records begin ${dayShort(report.fromDay)}.`}
         </span>

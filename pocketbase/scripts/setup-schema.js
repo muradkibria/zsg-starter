@@ -125,6 +125,25 @@ const COLLECTIONS = [
 
   // ── Contracts and ads ─────────────────────────────────────────────────────
   {
+    // Advertisers who sign in to the client portal to see their own campaigns'
+    // reports. Not a login collection: the API checks the code, as for the team.
+    name: "clients",
+    fields: [
+      text("name", 200, { required: true }),
+      text("contact_name", 200),
+      text("contact_email", 200),
+      bool("disabled"),
+      // Carried in the portal's session cookie; a new code bumps it, ending other sessions.
+      int("session_version"),
+      // Their six-digit sign-in code. Unique here; the API also keeps it apart from the team's codes.
+      text("login_code", 6, { pattern: "^[0-9]{6}$", hidden: true }),
+      date("last_sign_in"),
+      created(),
+      updated(),
+    ],
+    indexes: ["CREATE UNIQUE INDEX idx_clients_login_code ON clients (login_code) WHERE login_code != ''"],
+  },
+  {
     name: "campaigns",
     fields: [
       text("advertiser", 200, { required: true }),
@@ -135,6 +154,8 @@ const COLLECTIONS = [
       select("status", ["draft", "live", "ended"]),
       text("notes", 5000),
       bool("demo"),
+      // Whose portal shows it (none: only the team sees it).
+      relation("client", "clients"),
       created(),
       updated(),
     ],
@@ -696,12 +717,15 @@ async function seed(pb) {
   }
 }
 
-/** A random six-digit code nobody on the team has. */
+/** A random six-digit code nobody on the team, and no client, has. */
 async function unusedCode(pb) {
+  const existing = await pb.collections.getFullList({ fields: "name" });
+  const withCodes = ["users", "clients"].filter((n) => existing.some((c) => c.name === n));
   for (;;) {
     const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
-    const taken = await pb.collection("users").getList(1, 1, { filter: `login_code = "${code}"`, fields: "id" });
-    if (!taken.totalItems) return code;
+    let taken = false;
+    for (const name of withCodes) taken ||= (await pb.collection(name).getList(1, 1, { filter: `login_code = "${code}"`, fields: "id" })).totalItems > 0;
+    if (!taken) return code;
   }
 }
 

@@ -6,9 +6,11 @@ import { fileURLToPath } from "node:url";
 import { authRouter, requireSignedIn, sessionMiddleware } from "./auth";
 import { coreRouter } from "./core";
 import { errorHandler, HttpError } from "./http";
+import { portalRouter } from "./portal";
 import { auditRouter } from "./areas/audit";
 import { bagsRouter } from "./areas/bags";
 import { campaignsRouter } from "./areas/campaigns";
+import { clientsRouter } from "./areas/clients";
 import { exportsRouter } from "./areas/exports";
 import { loopsRouter } from "./areas/loops";
 import { payrollRouter } from "./areas/payroll";
@@ -34,6 +36,8 @@ export function createApp(): Express {
 
   app.get("/api/health", (_req, res) => void res.json({ ok: true }));
   app.use("/api/auth", authRouter());
+  // The client portal: client sessions only, scoped to the client's own campaigns.
+  app.use("/api/portal", portalRouter());
 
   // Everything else needs a signed-in user; each route checks its permission.
   const api = express.Router();
@@ -48,6 +52,7 @@ export function createApp(): Express {
   api.use(campaignsRouter());
   api.use(reportsRouter());
   api.use(teamRouter());
+  api.use(clientsRouter());
   api.use(auditRouter());
   api.use(zonesRouter());
   api.use((_req, _res, next) => next(new HttpError(404, "Not found")));

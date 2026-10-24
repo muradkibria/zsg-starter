@@ -119,18 +119,19 @@ export type Permission =
   | "settings.view"
   | "settings.edit"
   | "team.edit"
+  | "clients.edit"
   | "audit.view";
 
 const ALL: Permission[] = [
   "fleet.view", "bags.control", "bags.edit", "riders.view", "riders.edit", "riders.documents", "loops.edit",
   "loops.publish", "schedules.edit", "payroll.view", "payroll.approve", "exports.run", "campaigns.view",
-  "campaigns.edit", "zones.edit", "settings.view", "settings.edit", "team.edit", "audit.view",
+  "campaigns.edit", "zones.edit", "settings.view", "settings.edit", "team.edit", "clients.edit", "audit.view",
 ];
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   owner: ALL,
   ops: ALL.filter((p) => !["settings.edit", "team.edit"].includes(p)),
-  sales: ["fleet.view", "campaigns.view", "campaigns.edit", "loops.edit", "exports.run", "settings.view"],
+  sales: ["fleet.view", "campaigns.view", "campaigns.edit", "clients.edit", "loops.edit", "exports.run", "settings.view"],
   viewer: ["fleet.view", "riders.view", "campaigns.view", "payroll.view", "settings.view"],
 };
 

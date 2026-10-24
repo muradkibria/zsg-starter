@@ -6,8 +6,9 @@ import { logger } from "../log";
 
 const log = logger("audit");
 
+/** Who did it: someone on the team, a client in the portal ({ id: "", name }), or null for the Hub itself. */
 export async function audit(
-  actor: SessionUser | null,
+  actor: Pick<SessionUser, "id" | "name"> | null,
   action: string,
   summary: string,
   entity?: { type: string; id: string },
@@ -15,7 +16,7 @@ export async function audit(
 ): Promise<void> {
   try {
     await pb.collection("audit_log").create({
-      actor: actor?.id ?? "",
+      actor: actor?.id || "",
       actor_name: actor?.name ?? "System",
       action,
       entity_type: entity?.type ?? "",

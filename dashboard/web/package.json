@@ -13,6 +13,8 @@
     "@digilite/shared": "*",
     "@tanstack/react-query": "^5.104.0",
     "clsx": "^2.1.1",
+    "html-to-image": "^1.11.13",
+    "jspdf": "^4.2.1",
     "lucide-react": "^1.48.0",
     "maplibre-gl": "^6.11.2",
     "react": "^19.3.0",

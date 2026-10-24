@@ -470,6 +470,8 @@ export interface CampaignRow {
   confirmed: boolean;
   notes: string;
   demo: boolean;
+  /** The client whose portal shows it */
+  clientId: string | null;
   created: string;
   updated: string;
 }
@@ -491,6 +493,7 @@ export function toCampaignRow(r: RecordModel): CampaignRow {
     confirmed: (r.status || "draft") !== "draft",
     notes: r.notes ?? "",
     demo: !!r.demo,
+    clientId: r.client || null,
     created: parsePbDate(r.created)?.toISOString() ?? "",
     updated: parsePbDate(r.updated)?.toISOString() ?? "",
   };
@@ -677,7 +680,7 @@ function toSummary(c: CampaignRow, f: Facts, today: string, thumbId: string | nu
   };
 }
 
-function filesOf(campaignId: string, creatives: CreativeRow[]) {
+export function filesOf(campaignId: string, creatives: CreativeRow[]) {
   const linked = creatives.filter((c) => c.campaignId === campaignId);
   const keys = new Set(linked.map(fileKey));
   const md5s = [...new Set(linked.map((c) => c.md5).filter(Boolean))];
@@ -1017,7 +1020,7 @@ export async function campaignStats(
   c: CampaignRow,
   fromDay: string,
   toDay: string,
-  opts: { riderNames: "full" | "short" | null },
+  opts: { riderNames: "full" | "short" | null; map?: boolean },
 ): Promise<CampaignStats> {
   const [creatives, bags, coverage, names] = await Promise.all([loadCreatives(), loadBags(), playsCoverage(), zoneNames()]);
   const { linked, md5s } = filesOf(c.id, creatives);
@@ -1141,7 +1144,7 @@ export async function campaignStats(
     files: [...perFile.entries()]
       .map(([key, f]) => ({ key, name: fileName.get(key) ?? key, plays: f.plays, seconds: Math.round(f.seconds) }))
       .sort((a, b) => b.plays - a.plays),
-    map: await mapLines(pairs, daysWithPlays, bagNames),
+    map: opts.map === false ? { days: [], lines: [], points: 0, simplifiedToM: 0 } : await mapLines(pairs, daysWithPlays, bagNames),
     riderNamesIncluded: !!opts.riderNames,
   };
 }
@@ -1297,7 +1300,8 @@ export async function campaignReport(
   if (coverage.from && fromDay < coverage.from && toDay >= coverage.from) fromDay = coverage.from;
   if (fromDay > toDay) fromDay = toDay;
   const include = riderNames.requested && riderNames.permitted;
-  const stats = await campaignStats(c, fromDay, toDay, { riderNames: include ? "short" : null });
+  // The report draws its own heat maps, so it doesn't need the raw route lines.
+  const stats = await campaignStats(c, fromDay, toDay, { riderNames: include ? "short" : null, map: false });
   const { keys, md5s } = filesOf(c.id, await loadCreatives());
   const status = campaignStatus(c, today, await campaignFacts(c, md5s, keys.size, today));
   const detail = await reportDetail(md5s, stats, await zoneNames());

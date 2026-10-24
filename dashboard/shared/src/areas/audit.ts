@@ -51,6 +51,8 @@ const GROUP_LABEL: Record<string, string> = {
   zone: "Zones",
   zones: "Zones",
   team: "Team",
+  client: "Clients",
+  clients: "Clients",
   settings: "Settings",
   loop: "Loops",
   loops: "Loops",

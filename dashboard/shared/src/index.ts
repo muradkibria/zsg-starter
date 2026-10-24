@@ -13,6 +13,7 @@ export * from "./areas/exports";
 export * from "./areas/campaigns";
 export * from "./areas/reports";
 export * from "./areas/team";
+export * from "./areas/clients";
 export * from "./areas/audit";
 export * from "./areas/zones";
 export * from "./areas/bags";

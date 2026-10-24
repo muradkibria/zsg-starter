@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AuthProvider, RequireAuth } from "@/lib/auth";
+import { AuthProvider, RequireAuth, RequireClient } from "@/lib/auth";
 import { FeedbackProvider } from "@/components/feedback";
 import { AppShell } from "@/components/layout";
 import { Spinner } from "@/components/ui";
@@ -26,6 +26,11 @@ const ReportsPage = lazy(() => import("@/pages/reports/ReportsPage"));
 const ReportPage = lazy(() => import("@/pages/reports/ReportPage"));
 const ZonesPage = lazy(() => import("@/pages/zones/ZonesPage"));
 const SettingsPage = lazy(() => import("@/pages/settings/SettingsPage"));
+const ClientsPage = lazy(() => import("@/pages/clients/ClientsPage"));
+const PortalShell = lazy(() => import("@/pages/portal/PortalShell"));
+const PortalHome = lazy(() => import("@/pages/portal/PortalHome"));
+const PortalCampaignPage = lazy(() => import("@/pages/portal/PortalCampaignPage"));
+const PortalReportPage = lazy(() => import("@/pages/portal/PortalReportPage"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,6 +42,17 @@ const s = (el: React.ReactNode) => <Suspense fallback={<Spinner />}>{el}</Suspen
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
+  {
+    // The client portal: clients only, their own campaigns and reports.
+    path: "/portal",
+    element: <RequireClient>{s(<PortalShell />)}</RequireClient>,
+    children: [
+      { index: true, element: s(<PortalHome />) },
+      { path: "campaigns/:id", element: s(<PortalCampaignPage />) },
+      { path: "campaigns/:id/report", element: s(<PortalReportPage />) },
+      { path: "*", element: <Navigate to="/portal" replace /> },
+    ],
+  },
   {
     path: "/",
     element: (
@@ -63,6 +79,7 @@ const router = createBrowserRouter([
       { path: "campaigns/:id", element: s(<CampaignPage />) },
       { path: "reports", element: s(<ReportsPage />) },
       { path: "reports/:id", element: s(<ReportPage />) },
+      { path: "clients", element: s(<ClientsPage />) },
       { path: "zones", element: s(<ZonesPage />) },
       { path: "settings", element: s(<SettingsPage />) },
       { path: "*", element: <Navigate to="/map" replace /> },

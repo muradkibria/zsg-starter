@@ -18,11 +18,14 @@ export function CreativeThumb({
   name,
   className,
   size = "md",
+  base = "/creatives",
 }: {
   id: string | null | undefined;
   name: string;
   className?: string;
   size?: "sm" | "md" | "lg";
+  /** Where thumbnails come from: the hub's library, or "/portal/ads" in the client portal */
+  base?: string;
 }) {
   const [failed, setFailed] = useState(false);
   const box = size === "sm" ? "h-9 w-12 text-[11px]" : size === "lg" ? "h-[72px] w-24 text-base" : "h-12 w-16 text-xs";
@@ -30,7 +33,7 @@ export function CreativeThumb({
     <span className={clsx("relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md bg-ink font-display font-semibold text-white/85", box, className)}>
       {id && !failed ? (
         <img
-          src={api.href(`/creatives/${id}/thumb`)}
+          src={api.href(`${base}/${id}/thumb`)}
           alt=""
           loading="lazy"
           onError={() => setFailed(true)}

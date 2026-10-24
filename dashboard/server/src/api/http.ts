@@ -1,7 +1,7 @@
 // Express helpers: typed errors, validation, role checks.
 
 import type { NextFunction, Request, Response } from "express";
-import { can, type Permission, type SessionUser } from "@digilite/shared";
+import { can, type ClientSession, type Permission, type SessionUser } from "@digilite/shared";
 import { z } from "zod";
 import { ClientResponseError } from "pocketbase";
 import { WriteBlockedError } from "../colorlight/gate";
@@ -23,7 +23,10 @@ declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
+      /** Someone on the team */
       user?: SessionUser;
+      /** A client signed in to the portal (never set together with user). Not `client`: Node's request already has one (its socket). */
+      portalClient?: ClientSession;
     }
   }
 }
@@ -37,6 +40,11 @@ export function param(req: Request, name: string): string {
 export function user(req: Request): SessionUser {
   if (!req.user) throw new HttpError(401, "Please sign in");
   return req.user;
+}
+
+export function client(req: Request): ClientSession {
+  if (!req.portalClient) throw new HttpError(401, "Please sign in");
+  return req.portalClient;
 }
 
 /** Route guard: the signed-in user must hold the permission. */

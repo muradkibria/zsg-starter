@@ -29,6 +29,7 @@ const ENTITY_HREF: Record<string, (id: string) => string> = {
   export: () => "/exports",
   report: (id) => `/reports/${id}`,
   user: () => "/settings?section=team",
+  client: (id) => `/clients?client=${id}`,
   settings: () => "/settings",
 };
 

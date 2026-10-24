@@ -10,5 +10,5 @@ Working notes for the DigiLite Hub rebuild: decisions, findings and context that
 - [Live fleet findings](fleet-findings.md): what the real fleet data showed on 2026-09-29
 - [Prototype audit](prototype-audit.md): what in `simple-app/` is worth keeping, and what's broken
 - [Original spec analysis](spec-analysis.md): the V1 spec against current plans, plus longer-term direction
-- [Architecture notes](architecture-notes.md): map rendering at scale, data flow from Colorlight, pre-aggregation
+- [Architecture notes](architecture-notes.md): map rendering at scale, data flow from Colorlight, pre-aggregation, sign-in codes, client portal, report PDFs
 - [Open questions](open-questions.md): unresolved items to check or decide
