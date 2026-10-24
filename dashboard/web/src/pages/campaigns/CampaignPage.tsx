@@ -61,7 +61,7 @@ export default function CampaignPage() {
                 Edit
               </Button>
             )}
-            <LinkButton to={`/reports?campaign=${c.id}`} variant="primary" icon={<FileText className="size-4" />}>
+            <LinkButton to={`/clients?campaign=${c.id}`} variant="primary" icon={<FileText className="size-4" />}>
               Build client report
             </LinkButton>
           </>

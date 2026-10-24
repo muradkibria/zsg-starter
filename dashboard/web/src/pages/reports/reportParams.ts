@@ -46,11 +46,11 @@ export function reportSearch(st: ReportState, extra: Record<string, string> = {}
 export function printableHref(campaignId: string, st: ReportState, print = false): string {
   const p = reportSearch(st);
   if (print) p.set("print", "1");
-  return `/reports/${campaignId}?${p.toString()}`;
+  return `/clients/reports/${campaignId}?${p.toString()}`;
 }
 
 export function builderHref(campaignId: string, st: ReportState): string {
-  return `/reports?${reportSearch(st, { campaign: campaignId }).toString()}`;
+  return `/clients?${reportSearch(st, { campaign: campaignId }).toString()}`;
 }
 
 /** Words that would smuggle an estimate into the summary. */

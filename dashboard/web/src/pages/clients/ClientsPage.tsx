@@ -9,11 +9,12 @@ import clsx from "clsx";
 import { Building2, Check, Copy, KeyRound, Pencil, Plus, Power } from "lucide-react";
 import type { CampaignSummary, ClientAccount, ClientCodeResult } from "@digilite/shared";
 import { useFeedback } from "@/components/feedback";
-import { Button, Card, EmptyState, ErrorState, Field, Input, Notice, Page, PageHeader, Pill, Spinner } from "@/components/ui";
+import { Button, Card, EmptyState, ErrorState, Field, Input, Notice, Page, Pill, Spinner } from "@/components/ui";
 import { when } from "@/lib/format";
 import { useCampaigns } from "../campaigns/api";
 import { dayRange } from "../campaigns/format";
 import { Modal } from "../settings/Modal";
+import { ClientsTabs } from "./ClientsTabs";
 import { useAddClient, useClients, useNewClientCode, useUpdateClient } from "./api";
 
 const signInUrl = () => `${window.location.origin}/login`;
@@ -73,23 +74,18 @@ export default function ClientsPage() {
   };
 
   return (
-    <Page width="narrow">
-      <PageHeader
-        title="Clients"
-        sub="Advertisers who sign in to the client portal with their own six-digit code, to see their campaigns and download their reports."
-        actions={
-          <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setEditing("new")}>
-            Add a client
-          </Button>
-        }
-      />
-
-      <Notice tone="info">
-        <span className="block pt-0.5">
-          Clients sign in on the same page as the team, <strong>{signInUrl()}</strong>, and see only the confirmed campaigns linked to them: plays, time on
+    <Page wide>
+      <ClientsTabs sub="Build a proof-of-play report for an advertiser, and manage the logins clients use to download their own reports." />
+      <div className="flex max-w-[880px] flex-col gap-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="m-0 max-w-[620px] text-sm text-ink-2">
+          Each client signs in at <strong>{signInUrl()}</strong> with their own six-digit code. They see only the confirmed campaigns linked to them: plays, time on
           screen, estimated impressions and their reports. They can't see riders, routes or other advertisers' campaigns.
-        </span>
-      </Notice>
+        </p>
+        <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setEditing("new")}>
+          Add a client
+        </Button>
+      </div>
 
       {clients.isLoading && <Spinner label="Loading clients…" />}
       {clients.error && <ErrorState error={clients.error} retry={() => void clients.refetch()} />}
@@ -182,6 +178,7 @@ export default function ClientsPage() {
         />
       )}
       {reveal && <CodeReveal result={reveal.result} kind={reveal.kind} onClose={() => setReveal(null)} />}
+      </div>
     </Page>
   );
 }

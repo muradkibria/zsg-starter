@@ -27,9 +27,9 @@ const ENTITY_HREF: Record<string, (id: string) => string> = {
   schedule: () => "/schedules",
   payroll_period: () => "/payroll",
   export: () => "/exports",
-  report: (id) => `/reports/${id}`,
+  report: (id) => `/clients/reports/${id}`,
   user: () => "/settings?section=team",
-  client: (id) => `/clients?client=${id}`,
+  client: (id) => `/clients/portal?client=${id}`,
   settings: () => "/settings",
 };
 

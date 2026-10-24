@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { createBrowserRouter, Navigate, RouterProvider } from "react-router";
+import { createBrowserRouter, Navigate, RouterProvider, useLocation, useParams } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, RequireAuth, RequireClient } from "@/lib/auth";
 import { FeedbackProvider } from "@/components/feedback";
@@ -37,6 +37,13 @@ const queryClient = new QueryClient({
     queries: { staleTime: 15_000, retry: 1, refetchOnWindowFocus: true },
   },
 });
+
+/** Send an old address to its new one, keeping the report's settings in the query. */
+function MovedTo({ to }: { to: string }) {
+  const { id = "" } = useParams();
+  const { search } = useLocation();
+  return <Navigate to={to.replace(":id", id) + search} replace />;
+}
 
 const s = (el: React.ReactNode) => <Suspense fallback={<Spinner />}>{el}</Suspense>;
 
@@ -77,9 +84,12 @@ const router = createBrowserRouter([
       { path: "exports", element: s(<ExportsPage />) },
       { path: "campaigns", element: s(<CampaignsPage />) },
       { path: "campaigns/:id", element: s(<CampaignPage />) },
-      { path: "reports", element: s(<ReportsPage />) },
-      { path: "reports/:id", element: s(<ReportPage />) },
-      { path: "clients", element: s(<ClientsPage />) },
+      { path: "clients", element: s(<ReportsPage />) },
+      { path: "clients/portal", element: s(<ClientsPage />) },
+      { path: "clients/reports/:id", element: s(<ReportPage />) },
+      // Old addresses, kept working for saved links.
+      { path: "reports", element: <MovedTo to="/clients" /> },
+      { path: "reports/:id", element: <MovedTo to="/clients/reports/:id" /> },
       { path: "zones", element: s(<ZonesPage />) },
       { path: "settings", element: s(<SettingsPage />) },
       { path: "*", element: <Navigate to="/map" replace /> },

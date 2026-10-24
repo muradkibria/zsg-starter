@@ -12,6 +12,7 @@ import { useAuth } from "@/lib/auth";
 import { useCampaigns } from "../campaigns/api";
 import { PeriodPicker } from "../campaigns/components/PeriodPicker";
 import { dayRange, presetPeriod, type Period } from "../campaigns/format";
+import { ClientsTabs } from "../clients/ClientsTabs";
 import { useCampaignReport } from "./api";
 import { ReportDocument } from "./ReportDocument";
 import { mentionsEstimate, printableHref, readReportParams, reportSearch, type ReportState } from "./reportParams";
@@ -62,6 +63,7 @@ export default function ReportsPage() {
 
   return (
     <Page wide>
+      <ClientsTabs sub="Build a proof-of-play report for an advertiser, and manage the logins clients use to download their own reports." />
       <div className="grid items-start gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
         <aside aria-label="Report settings" className="flex flex-col gap-5">
           <div className="flex flex-col gap-1.5">
@@ -73,8 +75,8 @@ export default function ReportsPage() {
                 <span className="mx-1.5 text-caption">/</span>Report
               </nav>
             )}
-            <h1 className="m-0 font-display text-[28px] font-semibold tracking-[-0.02em] md:text-[32px]">Client report</h1>
-            <p className="m-0 text-sm text-muted">Measured proof of play for an advertiser. The preview shows exactly what they get.</p>
+            <h2 className="m-0 font-display text-xl font-semibold">Build a report</h2>
+            <p className="m-0 text-sm text-muted">The preview shows exactly what the advertiser will receive.</p>
           </div>
 
           {campaigns.isLoading && <Spinner label="Loading campaigns…" />}
