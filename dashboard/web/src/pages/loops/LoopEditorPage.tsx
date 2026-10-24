@@ -55,7 +55,7 @@ export default function LoopEditorPage() {
               title="Loop not found"
               body="It may have been deleted."
               action={
-                <Link to="/loops?tab=loops" className="font-semibold">
+                <Link to="/loops" className="font-semibold">
                   Back to loops
                 </Link>
               }
@@ -284,7 +284,7 @@ function Editor({ loop }: { loop: LoopDetail }) {
       savedVersion.current = version.current;
       const r = await del.mutateAsync(loop.id);
       toast(r.archived ? "Archived the draft — it was tried on a bag, so its record is kept" : "Deleted the draft");
-      nav("/loops?tab=loops");
+      nav("/loops");
     } catch (e) {
       toast((e as Error).message, "error");
     }
@@ -305,10 +305,6 @@ function Editor({ loop }: { loop: LoopDetail }) {
         <nav aria-label="Breadcrumb" className="text-[13px] text-muted">
           <Link to="/loops" className="text-accent no-underline hover:underline">
             Ads &amp; loops
-          </Link>
-          <span className="mx-1.5 text-caption">/</span>
-          <Link to="/loops?tab=loops" className="text-accent no-underline hover:underline">
-            Loops
           </Link>
         </nav>
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between md:gap-4">

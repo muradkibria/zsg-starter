@@ -23,7 +23,7 @@ const ENTITY_HREF: Record<string, (id: string) => string> = {
   zone: (id) => `/zones?zone=${id}`,
   campaign: (id) => `/campaigns/${id}`,
   loop: (id) => `/loops/${id}`,
-  creative: () => "/loops",
+  creative: () => "/loops?tab=creatives",
   schedule: () => "/schedules",
   payroll_period: () => "/payroll",
   export: () => "/exports",

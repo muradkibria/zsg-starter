@@ -11,11 +11,11 @@ import { SentTab } from "./SentTab";
 import { plural } from "./bits";
 
 type Tab = "creatives" | "loops" | "sent";
-const TABS: Tab[] = ["creatives", "loops", "sent"];
+const TABS: Tab[] = ["loops", "creatives", "sent"];
 
 export default function LoopsPage() {
   const [params, setParams] = useSearchParams();
-  const tab: Tab = TABS.includes(params.get("tab") as Tab) ? (params.get("tab") as Tab) : "creatives";
+  const tab: Tab = TABS.includes(params.get("tab") as Tab) ? (params.get("tab") as Tab) : "loops";
   const creatives = useCreatives();
   const loops = useLoops();
 
@@ -29,7 +29,7 @@ export default function LoopsPage() {
 
   const go = (t: Tab) => {
     const next = new URLSearchParams();
-    if (t !== "creatives") next.set("tab", t);
+    if (t !== "loops") next.set("tab", t);
     setParams(next);
   };
 
@@ -43,16 +43,16 @@ export default function LoopsPage() {
             value={tab}
             onChange={go}
             tabs={[
-              { value: "creatives", label: "Creatives", count: ads },
               { value: "loops", label: "Loops", count: loopCount },
+              { value: "creatives", label: "Creatives", count: ads },
               { value: "sent", label: "Sent" },
             ]}
           />
         }
       />
       <div role="tabpanel" id={`loops-panel-${tab}`} aria-labelledby={`loops-tab-${tab}`}>
-        {tab === "creatives" && <CreativesTab />}
         {tab === "loops" && <LoopsTab />}
+        {tab === "creatives" && <CreativesTab />}
         {tab === "sent" && <SentTab />}
       </div>
     </Page>
